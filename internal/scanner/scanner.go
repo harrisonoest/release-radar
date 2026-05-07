@@ -1,0 +1,190 @@
+package scanner
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/harrisonoest/release-radar/pkg/api"
+	"github.com/harrisonoest/release-radar/pkg/config"
+	"github.com/harrisonoest/release-radar/pkg/db"
+)
+
+type Release struct {
+	ArtistID    string
+	ArtistName  string
+	AlbumID     string
+	AlbumName   string
+	ReleaseDate string
+	TrackCount  int
+}
+
+type Scanner struct {
+	cfg         *config.Config
+	client      *api.Client
+	concurrency int
+	storefront  string
+	verbose     bool
+	checked     atomic.Int64
+	errors      atomic.Int64
+	onProgress  func(checked, found, errors int64)
+}
+
+func New(cfg *config.Config, client *api.Client, verbose bool) *Scanner {
+	concurrency := cfg.Scan.Concurrency
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	return &Scanner{
+		cfg:         cfg,
+		client:      client,
+		concurrency: concurrency,
+		verbose:     verbose,
+	}
+}
+
+func (s *Scanner) SetProgressCallback(fn func(checked, found, errors int64)) {
+	s.onProgress = fn
+}
+
+func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time) ([]Release, error) {
+	storefront, err := s.client.GetStorefront(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storefront: %w", err)
+	}
+	s.storefront = storefront
+
+	albumLimit := s.cfg.Scan.MaxAlbumsPerArtist
+	if albumLimit <= 0 {
+		albumLimit = 10
+	}
+
+	sem := make(chan struct{}, s.concurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var releases []Release
+	var errs []error
+	seen := make(map[string]bool)
+
+	total := int64(len(artists))
+	if s.verbose {
+		fmt.Printf("Scanning %d artists (concurrency: %d, storefront: %s, since: %s)…\n",
+			total, s.concurrency, storefront, since.Format("2006-01-02"))
+	}
+
+	for _, artist := range artists {
+		wg.Add(1)
+		go func(a db.Artist) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			found, err := s.checkArtist(ctx, a, since, albumLimit)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("%s: %w", a.Name, err))
+				mu.Unlock()
+				s.errors.Add(1)
+			}
+
+			if len(found) > 0 {
+				mu.Lock()
+				for _, r := range found {
+					if !seen[r.AlbumID] {
+						seen[r.AlbumID] = true
+						releases = append(releases, r)
+					}
+				}
+				mu.Unlock()
+			}
+
+			checked := s.checked.Add(1)
+
+			if s.onProgress != nil {
+				s.onProgress(checked, int64(len(releases)), s.errors.Load())
+			}
+		}(artist)
+	}
+
+	wg.Wait()
+
+	if s.verbose && s.errors.Load() > 0 {
+		fmt.Printf("  Scan complete with %d errors (first: %v)\n", s.errors.Load(), errs[0])
+	}
+
+	if len(errs) > 0 && len(releases) == 0 {
+		return nil, fmt.Errorf("all artist queries failed: %v", errs[0])
+	}
+
+	return releases, nil
+}
+
+func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time, albumLimit int) ([]Release, error) {
+	if a.CatalogID == "" {
+		return nil, fmt.Errorf("no catalog ID")
+	}
+
+	var result *api.ArtistAlbumsResult
+	var err error
+
+	for attempt := 0; attempt < 5; attempt++ {
+		result, err = s.client.GetArtistAlbums(ctx, s.storefront, a.CatalogID, albumLimit)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "rate limited") || strings.Contains(err.Error(), "429") {
+			backoff := time.Duration(1<<attempt) * time.Second
+			time.Sleep(backoff)
+			continue
+		}
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var releases []Release
+	for _, album := range result.Albums {
+		if album.Attributes.ReleaseDate == "" {
+			continue
+		}
+
+		releaseTime, err := parseReleaseDate(album.Attributes.ReleaseDate)
+		if err != nil {
+			continue
+		}
+
+		if releaseTime.After(since) {
+			releases = append(releases, Release{
+				ArtistID:    a.CatalogID,
+				ArtistName:  a.Name,
+				AlbumID:     album.Id,
+				AlbumName:   album.Attributes.Name,
+				ReleaseDate: album.Attributes.ReleaseDate,
+				TrackCount:  int(album.Attributes.TrackCount),
+			})
+		}
+	}
+
+	return releases, nil
+}
+
+func parseReleaseDate(dateStr string) (time.Time, error) {
+	dateStr = strings.TrimSpace(dateStr)
+
+	formats := []string{
+		"2006-01-02",
+		"2006-01",
+		"2006",
+	}
+	for _, f := range formats {
+		t, err := time.Parse(f, dateStr)
+		if err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("cannot parse date: %s", dateStr)
+}
