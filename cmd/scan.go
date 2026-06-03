@@ -133,6 +133,8 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 
 			var foundCount atomic.Int64
 			var errCount atomic.Int64
+			var prunedCount atomic.Int64
+			var permFailCount atomic.Int64
 
 			p := mpb.New(mpb.WithWidth(60))
 			bar := p.AddBar(int64(len(artists)),
@@ -144,12 +146,18 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 					decor.Any(func(decor.Statistics) string { return fmt.Sprintf("found: %d", foundCount.Load()) }),
 					decor.Name(" "),
 					decor.Any(func(decor.Statistics) string { return fmt.Sprintf("err: %d", errCount.Load()) }),
+					decor.Name(" "),
+					decor.Any(func(decor.Statistics) string { return fmt.Sprintf("pruned: %d", prunedCount.Load()) }),
+					decor.Name(" "),
+					decor.Any(func(decor.Statistics) string { return fmt.Sprintf("perm: %d", permFailCount.Load()) }),
 				),
 			)
 			scan.SetProgressCallback(func(checked, found, errors int64) {
 				bar.SetCurrent(checked)
 				foundCount.Store(found)
 				errCount.Store(errors)
+				prunedCount.Store(scan.Pruned())
+				permFailCount.Store(scan.PermanentFailures())
 			})
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Minute)
