@@ -172,7 +172,7 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 			pm.SetStorefront(storefront)
 
 			// Lazy backfill: if releases table is empty, walk the playlist and seed it.
-			if !scanNoBackfill {
+			if !scanNoBackfill && !dryRun {
 				if err := pm.EnsurePlaylistSilent(ctx); err == nil {
 					playlistID, _ := pm.EnsurePlaylist(ctx)
 					if playlistID != "" {
