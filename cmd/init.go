@@ -14,6 +14,7 @@ import (
 )
 
 var initAll bool
+var initFromPlaylist string
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -21,8 +22,12 @@ var initCmd = &cobra.Command{
 	Long: `Fetches all artists from your Apple Music library and saves them
 to a local cache. Sets the baseline timestamp for future release scans.
 
-Use --all to additionally pull artists from library albums, library songs,
-and liked songs.`,
+	Use --all to additionally pull artists from library albums, library songs,
+and liked songs.
+
+Use --from-playlist to additionally merge artists from a single playlist
+into the artists table without saving it as a permanent source. Accepts
+'name:NAME' or a playlist ID.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
@@ -79,6 +84,46 @@ and liked songs.`,
 			return fmt.Errorf("aggregation failed: %w", err)
 		}
 
+		if initFromPlaylist != "" {
+			sourceID := initFromPlaylist
+			if len(sourceID) > 5 && sourceID[:5] == "name:" {
+				playlists, err := client.GetAllLibraryPlaylists(ctx)
+				if err != nil {
+					return fmt.Errorf("failed to list playlists: %w", err)
+				}
+				found := false
+				for _, p := range playlists {
+					if p.Name == sourceID[5:] {
+						sourceID = p.ID
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("playlist named %q not found in your library", sourceID[5:])
+				}
+			}
+			ps, err := source.Build("playlist", sourceID)
+			if err != nil {
+				return fmt.Errorf("invalid playlist source: %w", err)
+			}
+			oneShotAgg := &source.Aggregator{
+				Store:          store,
+				Fetcher:        client,
+				Storefront:     storefront,
+				SkipSourceRows: true,
+				Logger: func(format string, args ...interface{}) {
+					if verbose {
+						fmt.Printf("  "+format+"\n", args...)
+					}
+				},
+			}
+			if err := oneShotAgg.Aggregate(ctx, []source.Source{ps}); err != nil {
+				return fmt.Errorf("playlist aggregation failed: %w", err)
+			}
+			fmt.Println("Merged artists from playlist (one-shot).")
+		}
+
 		if err := store.MarkScanned(0, 0); err != nil {
 			return fmt.Errorf("failed to save scan state: %w", err)
 		}
@@ -95,4 +140,5 @@ and liked songs.`,
 
 func init() {
 	initCmd.Flags().BoolVar(&initAll, "all", false, "pull artists from all library sources (albums, songs, liked)")
+	initCmd.Flags().StringVar(&initFromPlaylist, "from-playlist", "", "fetch artists from this playlist once (does not save as a source). Accepts 'name:NAME' or a playlist ID.")
 }
