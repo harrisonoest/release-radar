@@ -34,7 +34,6 @@ type Scanner struct {
 	concurrency int
 	storefront  string
 	verbose     bool
-	includeSeen bool
 	checked     atomic.Int64
 	errors      atomic.Int64
 	permFails   atomic.Int64
@@ -59,10 +58,6 @@ func New(cfg *config.Config, client api.ClientInterface, store *db.Store, verbos
 
 func (s *Scanner) SetProgressCallback(fn func(checked, found, errors int64)) {
 	s.onProgress = fn
-}
-
-func (s *Scanner) SetIncludeSeen(v bool) {
-	s.includeSeen = v
 }
 
 func (s *Scanner) PermanentFailures() int64 {

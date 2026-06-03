@@ -55,8 +55,7 @@ type ArtistAlbumsResult struct {
 
 type Client struct {
 	*applemusic.Client
-	storefront       string
-	scanPageSizeHint int
+	storefront string
 }
 
 type ClientInterface interface {
@@ -102,9 +101,6 @@ func (c *Client) GetStorefront(ctx context.Context) (string, error) {
 func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*ArtistAlbumsResult, error) {
 	watermark := since.AddDate(0, 0, -30)
 	pageSize := c.scanPageSize()
-	if pageSize <= 0 {
-		pageSize = 25
-	}
 	filter := "albums,singles,eps,compilations,live-albums"
 
 	var all []applemusic.Album
@@ -180,62 +176,7 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 }
 
 func (c *Client) scanPageSize() int {
-	if c.scanPageSizeHint > 0 {
-		return c.scanPageSizeHint
-	}
 	return 25
-}
-
-type LibraryArtistAlbumsResult struct {
-	Albums []applemusic.LibraryAlbum
-	Total  int
-}
-
-func (c *Client) GetLibraryArtistAlbums(ctx context.Context, libraryArtistID string, limit int) (*LibraryArtistAlbumsResult, error) {
-	var all []applemusic.LibraryAlbum
-	offset := 0
-
-	type albumResponse struct {
-		Data []applemusic.LibraryAlbum `json:"data"`
-		Next string                    `json:"next,omitempty"`
-		Meta struct {
-			Total int `json:"total"`
-		} `json:"meta"`
-	}
-
-	for {
-		u := fmt.Sprintf("v1/me/library/artists/%s/albums?include=catalog&limit=%d&offset=%d", libraryArtistID, limit, offset)
-		req, err := c.NewRequest("GET", u, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		result := &albumResponse{}
-		resp, err := c.Do(ctx, req, result)
-
-		if resp != nil {
-			if resp.StatusCode == http.StatusNotFound {
-				return &LibraryArtistAlbumsResult{}, nil
-			}
-			if resp.StatusCode == http.StatusTooManyRequests {
-				return nil, fmt.Errorf("rate limited (429)")
-			}
-			if resp.StatusCode != http.StatusOK {
-				return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-			}
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("API request failed: %w", err)
-		}
-
-		all = append(all, result.Data...)
-
-		if len(result.Data) < limit || len(all) >= result.Meta.Total {
-			return &LibraryArtistAlbumsResult{Albums: all, Total: result.Meta.Total}, nil
-		}
-		offset += limit
-	}
 }
 
 // PlaylistTrackResult is a single track returned by GetLibraryPlaylistCatalogTracks

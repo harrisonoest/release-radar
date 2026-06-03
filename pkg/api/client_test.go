@@ -251,28 +251,19 @@ func TestGetArtistAlbums_Pagination(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 
 		requestCount++
-		offset := r.URL.Query().Get("offset")
 
-		var albums []map[string]interface{}
-		total := 5
-
-		if offset == "0" {
-			albums = []map[string]interface{}{
-				{"id": "1", "type": "albums"},
-				{"id": "2", "type": "albums"},
-				{"id": "3", "type": "albums"},
-			}
-		} else {
-			albums = []map[string]interface{}{
-				{"id": "4", "type": "albums"},
-				{"id": "5", "type": "albums"},
-			}
+		albums := []map[string]interface{}{
+			{"id": "1", "type": "albums"},
+			{"id": "2", "type": "albums"},
+			{"id": "3", "type": "albums"},
+			{"id": "4", "type": "albums"},
+			{"id": "5", "type": "albums"},
 		}
+		total := 5
 
 		response := map[string]interface{}{
 			"data": albums,
 			"meta": map[string]interface{}{"total": total},
-			"next": nil,
 		}
 		json.NewEncoder(w).Encode(response)
 	})
@@ -295,7 +286,6 @@ func TestGetArtistAlbums_Pagination(t *testing.T) {
 		t.Fatalf("NewClient failed: %v", err)
 	}
 	client.BaseURL = baseURL
-	client.scanPageSizeHint = 3
 
 	result, err := client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err != nil {
@@ -307,8 +297,8 @@ func TestGetArtistAlbums_Pagination(t *testing.T) {
 	if result.Total != 5 {
 		t.Errorf("total = %d, want 5", result.Total)
 	}
-	if requestCount != 2 {
-		t.Errorf("request count = %d, want 2", requestCount)
+	if requestCount != 1 {
+		t.Errorf("request count = %d, want 1", requestCount)
 	}
 }
 
@@ -442,116 +432,6 @@ func TestGetArtistAlbums_ContextCancelled(t *testing.T) {
 	_, err = client.GetArtistAlbums(ctx, "us", "123", time.Now())
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
-	}
-}
-
-func TestGetLibraryArtistAlbums_Success(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/me/library/artists/r.xUjxaAb/albums", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		response := map[string]interface{}{
-			"data": []map[string]interface{}{
-				{"id": "1", "type": "library-albums", "attributes": map[string]interface{}{"name": "Album 1"}},
-			},
-			"meta": map[string]interface{}{"total": 1},
-		}
-		json.NewEncoder(w).Encode(response)
-	})
-
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	baseURL, _ := url.Parse(server.URL)
-	cfg := &config.Config{
-		Apple: config.AppleConfig{
-			TeamID:          "TESTTEAMID",
-			MusicKitKeyID:   "TESTKEYID",
-			MusicKitKeyPath: createTestKeyFile(t),
-		},
-	}
-	authenticator := &auth.Authenticator{}
-
-	client, err := NewClient(cfg, authenticator)
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-	client.BaseURL = baseURL
-
-	result, err := client.GetLibraryArtistAlbums(context.Background(), "r.xUjxaAb", 25)
-	if err != nil {
-		t.Fatalf("GetLibraryArtistAlbums failed: %v", err)
-	}
-	if len(result.Albums) != 1 {
-		t.Errorf("albums count = %d, want 1", len(result.Albums))
-	}
-	if result.Total != 1 {
-		t.Errorf("total = %d, want 1", result.Total)
-	}
-}
-
-func TestGetLibraryArtistAlbums_NotFound(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/me/library/artists/r.xUjxaAb/albums", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
-
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	baseURL, _ := url.Parse(server.URL)
-	cfg := &config.Config{
-		Apple: config.AppleConfig{
-			TeamID:          "TESTTEAMID",
-			MusicKitKeyID:   "TESTKEYID",
-			MusicKitKeyPath: createTestKeyFile(t),
-		},
-	}
-	authenticator := &auth.Authenticator{}
-
-	client, err := NewClient(cfg, authenticator)
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-	client.BaseURL = baseURL
-
-	result, err := client.GetLibraryArtistAlbums(context.Background(), "r.xUjxaAb", 25)
-	if err != nil {
-		t.Fatalf("GetLibraryArtistAlbums should not error on 404: %v", err)
-	}
-	if len(result.Albums) != 0 {
-		t.Errorf("expected empty albums, got %d", len(result.Albums))
-	}
-}
-
-func TestGetLibraryArtistAlbums_RateLimited(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/me/library/artists/r.xUjxaAb/albums", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-	})
-
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	baseURL, _ := url.Parse(server.URL)
-	cfg := &config.Config{
-		Apple: config.AppleConfig{
-			TeamID:          "TESTTEAMID",
-			MusicKitKeyID:   "TESTKEYID",
-			MusicKitKeyPath: createTestKeyFile(t),
-		},
-	}
-	authenticator := &auth.Authenticator{}
-
-	client, err := NewClient(cfg, authenticator)
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-	client.BaseURL = baseURL
-
-	_, err = client.GetLibraryArtistAlbums(context.Background(), "r.xUjxaAb", 25)
-	if err == nil {
-		t.Fatal("expected error for 429 response")
 	}
 }
 

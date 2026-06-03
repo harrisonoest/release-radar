@@ -24,7 +24,6 @@ var (
 	scanSince        string
 	scanConcurrency  int
 	scanLimitArtists int
-	scanIncludeSeen  bool
 	scanNoBackfill   bool
 
 	scanCmd = &cobra.Command{
@@ -132,7 +131,6 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 			}
 
 			scan := scanner.New(cfg, client, store, verbose)
-			scan.SetIncludeSeen(scanIncludeSeen)
 
 			var foundCount atomic.Int64
 			var errCount atomic.Int64
@@ -247,7 +245,6 @@ func init() {
 	scanCmd.Flags().StringVar(&scanSince, "since", "", "check releases since date (YYYY-MM-DD)")
 	scanCmd.Flags().IntVarP(&scanConcurrency, "concurrency", "c", 0, "number of concurrent artist queries (default from config)")
 	scanCmd.Flags().IntVar(&scanLimitArtists, "limit-artists", 0, "limit to first N artists (for testing)")
-	scanCmd.Flags().BoolVar(&scanIncludeSeen, "include-seen", false, "include releases in 'seen' state in the results (TODO: surface them in output)")
 	scanCmd.Flags().BoolVar(&scanNoBackfill, "no-backfill", false, "skip lazy backfill on first run")
 }
 

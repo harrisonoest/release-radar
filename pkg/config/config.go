@@ -27,9 +27,8 @@ type PlaylistConfig struct {
 }
 
 type ScanConfig struct {
-	Concurrency        int      `mapstructure:"concurrency"`
-	MaxAlbumsPerArtist int      `mapstructure:"max_albums_per_artist"`
-	IgnoredArtists     []string `mapstructure:"ignored_artists"`
+	Concurrency    int      `mapstructure:"concurrency"`
+	IgnoredArtists []string `mapstructure:"ignored_artists"`
 }
 
 func ConfigDir() (string, error) {
@@ -58,7 +57,6 @@ func Load(cfgFile string) (*Config, error) {
 	viper.SetDefault("playlist.name", "Release Radar")
 	viper.SetDefault("playlist.auto_create", true)
 	viper.SetDefault("scan.concurrency", 5)
-	viper.SetDefault("scan.max_albums_per_artist", 10)
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

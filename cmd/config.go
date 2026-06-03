@@ -38,7 +38,6 @@ var configShowCmd = &cobra.Command{
 		}
 		fmt.Printf("\nScan:\n")
 		fmt.Printf("  Concurrency:         %d\n", cfg.Scan.Concurrency)
-		fmt.Printf("  Max albums/artist:   %d\n", cfg.Scan.MaxAlbumsPerArtist)
 		if len(cfg.Scan.IgnoredArtists) > 0 {
 			fmt.Printf("  Ignored artists:     %v\n", cfg.Scan.IgnoredArtists)
 		}

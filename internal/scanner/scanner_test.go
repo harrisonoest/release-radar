@@ -297,9 +297,7 @@ func TestScanner_Scan(t *testing.T) {
 			}
 
 			cfg := &config.Config{
-				Scan: config.ScanConfig{
-					MaxAlbumsPerArtist: 10,
-				},
+				Scan: config.ScanConfig{},
 			}
 
 			s := New(cfg, client, nil, false)
@@ -348,7 +346,6 @@ func TestScanner_Scan_Deduplication(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -406,10 +403,7 @@ func TestScanner_Scan_Concurrency(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Scan: config.ScanConfig{
-			Concurrency:        5,
-			MaxAlbumsPerArtist: 10,
-		},
+		Scan: config.ScanConfig{},
 	}
 
 	s := New(cfg, client, nil, false)
@@ -467,7 +461,6 @@ func TestScanner_Scan_ContextCancellation(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        1,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -525,7 +518,6 @@ func TestScanner_Scan_ProgressCallback(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        2,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -598,7 +590,6 @@ func TestScanner_Scan_ErrorHandling(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        2,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -699,7 +690,6 @@ func TestScanner_checkArtist(t *testing.T) {
 
 			cfg := &config.Config{
 				Scan: config.ScanConfig{
-					MaxAlbumsPerArtist: 10,
 				},
 			}
 
@@ -753,7 +743,6 @@ func TestScanner_checkArtist_RateLimitRetry(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -791,7 +780,6 @@ func TestScanner_checkArtist_RateLimitExhausted(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -830,7 +818,6 @@ func TestScanner_checkArtist_ContextCancellation(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -878,7 +865,6 @@ func TestScanner_checkArtist_ParseError(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -911,7 +897,6 @@ func TestScanner_Scan_EmptyArtists(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        2,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -942,7 +927,6 @@ func TestScanner_Scan_AllFailures(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        2,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -992,7 +976,6 @@ func TestScanner_Scan_PartialSuccess(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        2,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -1072,7 +1055,6 @@ func TestScanner_Scan_DateFormats(t *testing.T) {
 
 			cfg := &config.Config{
 				Scan: config.ScanConfig{
-					MaxAlbumsPerArtist: 10,
 				},
 			}
 
@@ -1120,7 +1102,6 @@ func TestScanner_Scan_Parallel(t *testing.T) {
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
 			Concurrency:        10,
-			MaxAlbumsPerArtist: 10,
 		},
 	}
 
@@ -1160,7 +1141,7 @@ func TestScan_SkipsKnownReleases(t *testing.T) {
 		}
 	}
 
-	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1, MaxAlbumsPerArtist: 10}}
+	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1}}
 	client := newMockAPIClient()
 	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
 	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
