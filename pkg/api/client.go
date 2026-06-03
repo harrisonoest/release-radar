@@ -328,7 +328,7 @@ func (c *Client) SearchArtists(ctx context.Context, storefront, name string) (*A
 	return nil, nil
 }
 
-func (c *Client) GetAllLibraryArtists(ctx context.Context, limit int, onProgress ProgressCallback) (*LibraryArtists, error) {
+func (c *Client) GetAllLibraryArtists(ctx context.Context, limit int, onProgress func(page, total int)) (*LibraryArtists, error) {
 	var all []LibraryArtist
 	offset := 0
 	page := 0

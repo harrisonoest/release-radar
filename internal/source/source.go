@@ -51,6 +51,11 @@ type Fetcher interface {
 // Source implementations import "github.com/harrisonoest/release-radar/pkg/api"
 // and convert api.* values into []RawArtist in their Fetch method.
 
+// Compile-time assertion that *api.Client satisfies the Fetcher interface.
+// If a method on Client drifts away from the interface (e.g. ProgressCallback
+// vs func(page, total int)), the build fails here.
+var _ Fetcher = (*api.Client)(nil)
+
 // Build constructs a Source from a type+id spec.
 func Build(sourceType, sourceID string) (Source, error) {
 	switch sourceType {
