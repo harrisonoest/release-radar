@@ -72,11 +72,20 @@ func (m *Manager) EnsurePlaylist(ctx context.Context) (string, error) {
 	return created.Data[0].Id, nil
 }
 
-// EnsurePlaylistSilent is a no-op wrapper to surface the playlist ID without
-// failing if it doesn't exist. It does NOT create the playlist.
+// EnsurePlaylistSilent returns nil if the configured playlist exists in the
+// user's library. It does NOT create the playlist and does NOT fail if missing.
 func (m *Manager) EnsurePlaylistSilent(ctx context.Context) error {
-	_, err := m.EnsurePlaylist(ctx)
-	return err
+	desired := m.cfg.Playlist.Name
+	all, _, err := m.client.Me.GetAllLibraryPlaylists(ctx, &applemusic.PageOptions{Limit: 100})
+	if err != nil {
+		return fmt.Errorf("failed to fetch playlists: %w", err)
+	}
+	for _, p := range all.Data {
+		if p.Attributes.Name == desired {
+			return nil
+		}
+	}
+	return fmt.Errorf("playlist %q not found", desired)
 }
 
 func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases []scanner.Release) (int, error) {
