@@ -155,6 +155,26 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Minute)
 			defer cancel()
 
+			pm := playlist.New(cfg, client, store)
+			storefront, err := client.GetStorefront(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to get storefront: %w", err)
+			}
+			pm.SetStorefront(storefront)
+
+			// Lazy backfill: if releases table is empty, walk the playlist and seed it.
+			if err := pm.EnsurePlaylistSilent(ctx); err == nil {
+				playlistID, _ := pm.EnsurePlaylist(ctx)
+				if playlistID != "" {
+					n, berr := pm.BackfillFromPlaylist(ctx, playlistID)
+					if berr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: backfill failed: %v\n", berr)
+					} else if n > 0 && verbose {
+						fmt.Printf("Backfilled %d releases from existing playlist.\n", n)
+					}
+				}
+			}
+
 			releases, err := scan.Scan(ctx, artists, since)
 			p.Wait()
 			fmt.Println()
@@ -180,13 +200,6 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 				fmt.Printf("\nDry run — %d releases would be added (not saved).\n", len(releases))
 				return nil
 			}
-
-			pm := playlist.New(cfg, client, store)
-			storefront, err := client.GetStorefront(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to get storefront: %w", err)
-			}
-			pm.SetStorefront(storefront)
 
 			playlistID, err := pm.EnsurePlaylist(ctx)
 			if err != nil {

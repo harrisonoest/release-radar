@@ -72,6 +72,13 @@ func (m *Manager) EnsurePlaylist(ctx context.Context) (string, error) {
 	return created.Data[0].Id, nil
 }
 
+// EnsurePlaylistSilent is a no-op wrapper to surface the playlist ID without
+// failing if it doesn't exist. It does NOT create the playlist.
+func (m *Manager) EnsurePlaylistSilent(ctx context.Context) error {
+	_, err := m.EnsurePlaylist(ctx)
+	return err
+}
+
 func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases []scanner.Release) (int, error) {
 	existing, err := m.getExistingCatalogIDsFunc(ctx, playlistID)
 	if err != nil {
