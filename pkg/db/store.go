@@ -26,6 +26,25 @@ type ScanState struct {
 	AlbumsAdded int
 }
 
+type ArtistSource struct {
+	CatalogID  string
+	SourceType string
+	SourceID   string
+	AddedAt    string
+}
+
+type Release struct {
+	AlbumID         string
+	CatalogArtistID string
+	ArtistName      string
+	Name            string
+	ReleaseDate     string
+	TrackCount      int
+	State           string
+	FirstSeenAt     string
+	AddedAt         string
+}
+
 type AuthTokens struct {
 	DeveloperToken string
 	DeveloperExp   string
