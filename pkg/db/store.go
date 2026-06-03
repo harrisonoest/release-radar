@@ -57,8 +57,8 @@ type Store struct {
 
 const schema = `
 CREATE TABLE IF NOT EXISTS artists (
-	library_id TEXT PRIMARY KEY,
-	catalog_id TEXT NOT NULL DEFAULT '',
+	catalog_id TEXT PRIMARY KEY,
+	library_id TEXT NOT NULL DEFAULT '',
 	name TEXT NOT NULL,
 	href TEXT NOT NULL,
 	last_seen TEXT NOT NULL
@@ -170,22 +170,17 @@ func (s *Store) migrateSchema() error {
 
 	err = s.db.QueryRow("SELECT name FROM pragma_table_info('artists') WHERE name = 'library_id' AND pk = 1").Scan(&columnName)
 	if err == nil {
-		return nil
-	}
-
-	err = s.db.QueryRow("SELECT name FROM pragma_table_info('artists') WHERE name = 'catalog_id' AND pk = 1").Scan(&columnName)
-	if err == nil {
-		fmt.Fprintf(os.Stderr, "Migrating database schema…\n")
+		fmt.Fprintf(os.Stderr, "Migrating database schema (catalog_id key)…\n")
 		tx, err := s.db.Begin()
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS artists_new (library_id TEXT PRIMARY KEY, catalog_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, href TEXT NOT NULL, last_seen TEXT NOT NULL)"); err != nil {
+		if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS artists_new (catalog_id TEXT PRIMARY KEY, library_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, href TEXT NOT NULL, last_seen TEXT NOT NULL)"); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("INSERT INTO artists_new (library_id, catalog_id, name, href, last_seen) SELECT library_id, catalog_id, name, href, last_seen FROM artists"); err != nil {
+		if _, err := tx.Exec("INSERT INTO artists_new (catalog_id, library_id, name, href, last_seen) SELECT catalog_id, library_id, name, href, last_seen FROM artists"); err != nil {
 			return err
 		}
 		if _, err := tx.Exec("DROP TABLE artists"); err != nil {
@@ -228,10 +223,10 @@ func (s *Store) migrateFromJSON(cacheDir string) error {
 		if json.Unmarshal(data, &cache) == nil && len(cache.Artists) > 0 {
 			tx, _ := s.db.Begin()
 			if tx != nil {
-				stmt, err := tx.Prepare("INSERT OR REPLACE INTO artists (library_id, catalog_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
+				stmt, err := tx.Prepare("INSERT OR REPLACE INTO artists (catalog_id, library_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
 				if err == nil {
 					for _, a := range cache.Artists {
-						stmt.Exec(a.ID, a.CatalogID, a.Name, a.Href, a.LastSeen)
+						stmt.Exec(a.CatalogID, a.ID, a.Name, a.Href, a.LastSeen)
 					}
 					tx.Commit()
 					migrated = true
@@ -302,14 +297,14 @@ func (s *Store) ReplaceArtists(artists []Artist) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO artists (library_id, catalog_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO artists (catalog_id, library_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, a := range artists {
-		if _, err := stmt.Exec(a.LibraryID, a.CatalogID, a.Name, a.Href, a.LastSeen); err != nil {
+		if _, err := stmt.Exec(a.CatalogID, a.LibraryID, a.Name, a.Href, a.LastSeen); err != nil {
 			return err
 		}
 	}

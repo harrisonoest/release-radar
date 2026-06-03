@@ -209,7 +209,7 @@ sqlite3 ~/.config/release-radar/release-radar.db "SELECT state, COUNT(*) FROM re
 -- Core artist table (one row per unique catalog artist)
 CREATE TABLE artists (
     catalog_id TEXT PRIMARY KEY,
-    library_id TEXT NOT NULL,
+    library_id TEXT NOT NULL DEFAULT '',
     name       TEXT NOT NULL,
     href       TEXT NOT NULL,
     last_seen  TEXT NOT NULL
