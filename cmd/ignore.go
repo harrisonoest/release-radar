@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/harrisonoest/release-radar/pkg/db"
 	"github.com/spf13/cobra"
@@ -28,6 +29,10 @@ var ignoreAddCmd = &cobra.Command{
 		catalogID := args[0]
 		name := args[1]
 
+		if err := validateCatalogID(catalogID); err != nil {
+			return err
+		}
+
 		if err := store.IgnoreArtist(catalogID, name); err != nil {
 			return fmt.Errorf("failed to ignore artist: %w", err)
 		}
@@ -50,6 +55,10 @@ var ignoreRemoveCmd = &cobra.Command{
 		defer store.Close()
 
 		catalogID := args[0]
+
+		if err := validateCatalogID(catalogID); err != nil {
+			return err
+		}
 
 		ignored, err := store.IsArtistIgnored(catalogID)
 		if err != nil {
@@ -95,6 +104,19 @@ var ignoreListCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func validateCatalogID(catalogID string) error {
+	if catalogID == "" {
+		return fmt.Errorf("catalog_id cannot be empty")
+	}
+	// Catalog IDs are numeric strings (e.g., "1068300376")
+	// Library IDs are prefixed (e.g., "r.xUjxaAb")
+	validFormat := regexp.MustCompile(`^[0-9]+$|^[a-z]\.[a-zA-Z0-9]+$`)
+	if !validFormat.MatchString(catalogID) {
+		return fmt.Errorf("invalid catalog_id format: %s (expected numeric ID or prefixed library ID like 'r.xUjxaAb')", catalogID)
+	}
+	return nil
 }
 
 func init() {

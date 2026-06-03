@@ -45,19 +45,31 @@ to a local cache. Sets the baseline timestamp for future release scans.`,
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 		defer cancel()
 
-		p := mpb.New(mpb.WithWidth(60))
+p := mpb.New(mpb.WithWidth(60))
 		bar := p.AddBar(0,
 			mpb.BarFillerClearOnComplete(),
 			mpb.PrependDecorators(decor.Name("Fetching artists", decor.WCSyncSpace)),
 			mpb.AppendDecorators(decor.CountersNoUnit("pages: %d / %d")),
 		)
 
-		libraryArtists, err := client.GetAllLibraryArtists(ctx, 25, func(page, total int) {
-			if total > 0 {
+		var libraryArtists *api.LibraryArtists
+		var firstTotalSet bool
+		var totalPages int
+
+		libraryArtists, err = client.GetAllLibraryArtists(ctx, 25, func(page, total int) {
+			if total > 0 && !firstTotalSet {
+				firstTotalSet = true
+				totalPages = total
 				bar.SetTotal(int64(total), false)
+				bar.EnableTriggerComplete()
 			}
 			bar.SetCurrent(int64(page))
 		})
+		if totalPages > 0 {
+			bar.SetCurrent(int64(totalPages))
+		} else {
+			bar.EnableTriggerComplete()
+		}
 		p.Wait()
 
 		if err != nil {
@@ -109,6 +121,9 @@ to a local cache. Sets the baseline timestamp for future release scans.`,
 		seenCatalog := make(map[string]int)
 
 		for _, e := range entries {
+			if e.catalogID == "" {
+				continue
+			}
 			if !standaloneCatalogs[e.catalogID] {
 				continue
 			}

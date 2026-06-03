@@ -16,10 +16,16 @@ type Manager struct {
 	cfg        *config.Config
 	client     *api.Client
 	storefront string
+
+	getAlbumCatalogTrackIDsFunc func(ctx context.Context, albumID string) ([]songID, error)
+	getExistingCatalogIDsFunc   func(ctx context.Context, playlistID string) (map[string]bool, error)
 }
 
 func New(cfg *config.Config, client *api.Client) *Manager {
-	return &Manager{cfg: cfg, client: client}
+	m := &Manager{cfg: cfg, client: client}
+	m.getAlbumCatalogTrackIDsFunc = m.getAlbumCatalogTrackIDs
+	m.getExistingCatalogIDsFunc = m.getExistingCatalogIDs
+	return m
 }
 
 func (m *Manager) SetStorefront(storefront string) {
@@ -64,14 +70,14 @@ func (m *Manager) EnsurePlaylist(ctx context.Context) (string, error) {
 }
 
 func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases []scanner.Release) (int, error) {
-	existing, err := m.getExistingCatalogIDs(ctx, playlistID)
+	existing, err := m.getExistingCatalogIDsFunc(ctx, playlistID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get existing tracks: %w", err)
 	}
 
 	added := 0
 	for _, rel := range releases {
-		tracks, err := m.getAlbumCatalogTrackIDs(ctx, rel.AlbumID)
+		tracks, err := m.getAlbumCatalogTrackIDsFunc(ctx, rel.AlbumID)
 		if err != nil {
 			fmt.Printf("  [warn] %s — %s: %v\n", rel.ArtistName, rel.AlbumName, err)
 			continue

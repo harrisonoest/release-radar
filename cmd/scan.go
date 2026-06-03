@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -37,6 +38,14 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 
 			if scanConcurrency > 0 {
 				cfg.Scan.Concurrency = scanConcurrency
+			}
+
+			if scanConcurrency < 0 {
+				return errors.New("concurrency must be >= 0")
+			}
+
+			if scanLimitArtists < 0 {
+				return errors.New("limit must be >= 0")
 			}
 
 			store, err := db.Open("")
@@ -137,7 +146,6 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 					decor.Any(func(decor.Statistics) string { return fmt.Sprintf("err: %d", errCount.Load()) }),
 				),
 			)
-
 			scan.SetProgressCallback(func(checked, found, errors int64) {
 				bar.SetCurrent(checked)
 				foundCount.Store(found)

@@ -22,9 +22,14 @@ type Release struct {
 	TrackCount  int
 }
 
+type APIClient interface {
+	GetStorefront(ctx context.Context) (string, error)
+	GetArtistAlbums(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error)
+}
+
 type Scanner struct {
 	cfg         *config.Config
-	client      *api.Client
+	client      api.ClientInterface
 	concurrency int
 	storefront  string
 	verbose     bool
@@ -33,7 +38,7 @@ type Scanner struct {
 	onProgress  func(checked, found, errors int64)
 }
 
-func New(cfg *config.Config, client *api.Client, verbose bool) *Scanner {
+func New(cfg *config.Config, client api.ClientInterface, verbose bool) *Scanner {
 	concurrency := cfg.Scan.Concurrency
 	if concurrency <= 0 {
 		concurrency = 10
@@ -98,13 +103,20 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 						releases = append(releases, r)
 					}
 				}
+				releaseCount := int64(len(releases))
 				mu.Unlock()
-			}
 
-			checked := s.checked.Add(1)
+				checked := s.checked.Add(1)
 
-			if s.onProgress != nil {
-				s.onProgress(checked, int64(len(releases)), s.errors.Load())
+				if s.onProgress != nil {
+					s.onProgress(checked, releaseCount, s.errors.Load())
+				}
+			} else {
+				checked := s.checked.Add(1)
+
+				if s.onProgress != nil {
+					s.onProgress(checked, int64(len(releases)), s.errors.Load())
+				}
 			}
 		}(artist)
 	}
@@ -131,6 +143,9 @@ func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time,
 	var err error
 
 	for attempt := 0; attempt < 5; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		result, err = s.client.GetArtistAlbums(ctx, s.storefront, a.CatalogID, albumLimit)
 		if err == nil {
 			break

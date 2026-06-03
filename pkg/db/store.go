@@ -38,8 +38,8 @@ type Store struct {
 
 const schema = `
 CREATE TABLE IF NOT EXISTS artists (
-	catalog_id TEXT PRIMARY KEY,
-	library_id TEXT NOT NULL,
+	library_id TEXT PRIMARY KEY,
+	catalog_id TEXT NOT NULL DEFAULT '',
 	name TEXT NOT NULL,
 	href TEXT NOT NULL,
 	last_seen TEXT NOT NULL
@@ -96,6 +96,11 @@ func Open(cacheDir string) (*Store, error) {
 
 	store := &Store{db: db}
 
+	if err := store.migrateSchema(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cannot migrate schema: %w", err)
+	}
+
 	if err := store.migrateFromJSON(cacheDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: JSON migration failed: %v\n", err)
 	}
@@ -105,6 +110,47 @@ func Open(cacheDir string) (*Store, error) {
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func (s *Store) migrateSchema() error {
+	var columnName string
+	err := s.db.QueryRow("PRAGMA table_info(artists)").Scan(
+		new(int), new(string), new(string), new(int), new(interface{}), new(int),
+	)
+	if err != nil {
+		return nil
+	}
+
+	err = s.db.QueryRow("SELECT name FROM pragma_table_info('artists') WHERE name = 'library_id' AND pk = 1").Scan(&columnName)
+	if err == nil {
+		return nil
+	}
+
+	err = s.db.QueryRow("SELECT name FROM pragma_table_info('artists') WHERE name = 'catalog_id' AND pk = 1").Scan(&columnName)
+	if err == nil {
+		fmt.Fprintf(os.Stderr, "Migrating database schema…\n")
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS artists_new (library_id TEXT PRIMARY KEY, catalog_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, href TEXT NOT NULL, last_seen TEXT NOT NULL)"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("INSERT INTO artists_new (library_id, catalog_id, name, href, last_seen) SELECT library_id, catalog_id, name, href, last_seen FROM artists"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DROP TABLE artists"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("ALTER TABLE artists_new RENAME TO artists"); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+
+	return nil
 }
 
 func (s *Store) migrateFromJSON(cacheDir string) error {
@@ -135,10 +181,10 @@ func (s *Store) migrateFromJSON(cacheDir string) error {
 		if json.Unmarshal(data, &cache) == nil && len(cache.Artists) > 0 {
 			tx, _ := s.db.Begin()
 			if tx != nil {
-				stmt, err := tx.Prepare("INSERT OR REPLACE INTO artists (catalog_id, library_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
+				stmt, err := tx.Prepare("INSERT OR REPLACE INTO artists (library_id, catalog_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
 				if err == nil {
 					for _, a := range cache.Artists {
-						stmt.Exec(a.CatalogID, a.ID, a.Name, a.Href, a.LastSeen)
+						stmt.Exec(a.ID, a.CatalogID, a.Name, a.Href, a.LastSeen)
 					}
 					tx.Commit()
 					migrated = true
@@ -199,14 +245,14 @@ func (s *Store) ReplaceArtists(artists []Artist) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO artists (catalog_id, library_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO artists (library_id, catalog_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, a := range artists {
-		if _, err := stmt.Exec(a.CatalogID, a.LibraryID, a.Name, a.Href, a.LastSeen); err != nil {
+		if _, err := stmt.Exec(a.LibraryID, a.CatalogID, a.Name, a.Href, a.LastSeen); err != nil {
 			return err
 		}
 	}
@@ -215,7 +261,7 @@ func (s *Store) ReplaceArtists(artists []Artist) error {
 }
 
 func (s *Store) ListArtists() ([]Artist, error) {
-	rows, err := s.db.Query("SELECT catalog_id, library_id, name, href, last_seen FROM artists ORDER BY name")
+	rows, err := s.db.Query("SELECT library_id, catalog_id, name, href, last_seen FROM artists ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +270,7 @@ func (s *Store) ListArtists() ([]Artist, error) {
 	var artists []Artist
 	for rows.Next() {
 		var a Artist
-		if err := rows.Scan(&a.CatalogID, &a.LibraryID, &a.Name, &a.Href, &a.LastSeen); err != nil {
+		if err := rows.Scan(&a.LibraryID, &a.CatalogID, &a.Name, &a.Href, &a.LastSeen); err != nil {
 			return nil, err
 		}
 		artists = append(artists, a)

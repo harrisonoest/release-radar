@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -305,6 +307,7 @@ func (a *Authenticator) startOAuthFlow(ctx context.Context, devToken string) (st
 	if err != nil {
 		return "", fmt.Errorf("cannot start local server: %w", err)
 	}
+	defer listener.Close()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	callbackURL := fmt.Sprintf("http://localhost:%d%s", port, callbackPath)
@@ -450,4 +453,22 @@ func (a *Authenticator) saveCache(cache *TokenCache) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+// GenerateTestKey generates a test ECDSA P-256 key pair
+func GenerateTestKey() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+// MarshalPrivateKey marshals an ECDSA private key to PEM format
+func MarshalPrivateKey(key *ecdsa.PrivateKey) ([]byte, error) {
+	derBytes, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "EC PRIVATE KEY",
+		Bytes: derBytes,
+	})
+	return pemBytes, nil
 }

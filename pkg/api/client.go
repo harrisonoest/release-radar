@@ -8,7 +8,7 @@ import (
 
 	"github.com/harrisonoest/release-radar/internal/auth"
 	"github.com/harrisonoest/release-radar/pkg/config"
-	"github.com/minchao/go-apple-music"
+	applemusic "github.com/minchao/go-apple-music"
 )
 
 type ProgressCallback func(done, total int)
@@ -55,6 +55,11 @@ type ArtistAlbumsResult struct {
 type Client struct {
 	*applemusic.Client
 	storefront string
+}
+
+type ClientInterface interface {
+	GetStorefront(ctx context.Context) (string, error)
+	GetArtistAlbums(ctx context.Context, storefront, artistID string, limit int) (*ArtistAlbumsResult, error)
 }
 
 func NewClient(cfg *config.Config, authenticator *auth.Authenticator) (*Client, error) {
@@ -121,20 +126,71 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 			if resp.StatusCode == http.StatusTooManyRequests {
 				return nil, fmt.Errorf("rate limited (429)")
 			}
+			if resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+			}
 		}
 
 		if err != nil {
 			return nil, fmt.Errorf("API request failed: %w", err)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+		all = append(all, result.Data...)
+
+		if len(result.Data) < limit || len(all) >= result.Meta.Total {
+			return &ArtistAlbumsResult{Albums: all, Total: result.Meta.Total}, nil
+		}
+		offset += limit
+	}
+}
+
+type LibraryArtistAlbumsResult struct {
+	Albums []applemusic.LibraryAlbum
+	Total  int
+}
+
+func (c *Client) GetLibraryArtistAlbums(ctx context.Context, libraryArtistID string, limit int) (*LibraryArtistAlbumsResult, error) {
+	var all []applemusic.LibraryAlbum
+	offset := 0
+
+	type albumResponse struct {
+		Data []applemusic.LibraryAlbum `json:"data"`
+		Next string                    `json:"next,omitempty"`
+		Meta struct {
+			Total int `json:"total"`
+		} `json:"meta"`
+	}
+
+	for {
+		u := fmt.Sprintf("v1/me/library/artists/%s/albums?include=catalog&limit=%d&offset=%d", libraryArtistID, limit, offset)
+		req, err := c.NewRequest("GET", u, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		result := &albumResponse{}
+		resp, err := c.Do(ctx, req, result)
+
+		if resp != nil {
+			if resp.StatusCode == http.StatusNotFound {
+				return &LibraryArtistAlbumsResult{}, nil
+			}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				return nil, fmt.Errorf("rate limited (429)")
+			}
+			if resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+			}
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("API request failed: %w", err)
 		}
 
 		all = append(all, result.Data...)
 
 		if len(result.Data) < limit || len(all) >= result.Meta.Total {
-			return &ArtistAlbumsResult{Albums: all, Total: result.Meta.Total}, nil
+			return &LibraryArtistAlbumsResult{Albums: all, Total: result.Meta.Total}, nil
 		}
 		offset += limit
 	}

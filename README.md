@@ -42,15 +42,15 @@ mv release-radar ~/.local/bin/
 
 Make targets:
 
-| `make` | Action |
-|--------|--------|
-| `build` | Compile binary |
-| `test` | Run all tests |
-| `vet` | Static analysis |
-| `lint` | vet + gofmt check |
-| `clean` | Remove binary |
-| `install` | Build + copy to `~/.local/bin/` |
-| `run ARGS="scan -v"` | Build + run with args |
+| `make`               | Action                          |
+| -------------------- | ------------------------------- |
+| `build`              | Compile binary                  |
+| `test`               | Run all tests                   |
+| `vet`                | Static analysis                 |
+| `lint`               | vet + gofmt check               |
+| `clean`              | Remove binary                   |
+| `install`            | Build + copy to `~/.local/bin/` |
+| `run ARGS="scan -v"` | Build + run with args           |
 
 ## Setup
 
@@ -132,17 +132,17 @@ Run `scan` on a cron job for weekly updates:
 
 ## Configuration reference
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `apple.team_id` | — | Apple Developer Team ID |
-| `apple.musickit_key_id` | — | MusicKit private key ID |
-| `apple.musickit_key_path` | — | Path to `.p8` private key file |
-| `playlist.name` | `Release Radar` | Playlist name for new releases |
-| `playlist.auto_create` | `true` | Create playlist if not found |
-| `playlist.id` | — | Override playlist by ID instead of name |
-| `scan.concurrency` | `5` | Concurrent artist queries |
-| `scan.max_albums_per_artist` | `10` | Albums fetched per artist |
-| `scan.ignored_artists` | `[]` | Catalog IDs to exclude from scans |
+| Key                          | Default         | Description                             |
+| ---------------------------- | --------------- | --------------------------------------- |
+| `apple.team_id`              | —               | Apple Developer Team ID                 |
+| `apple.musickit_key_id`      | —               | MusicKit private key ID                 |
+| `apple.musickit_key_path`    | —               | Path to `.p8` private key file          |
+| `playlist.name`              | `Release Radar` | Playlist name for new releases          |
+| `playlist.auto_create`       | `true`          | Create playlist if not found            |
+| `playlist.id`                | —               | Override playlist by ID instead of name |
+| `scan.concurrency`           | `5`             | Concurrent artist queries               |
+| `scan.max_albums_per_artist` | `10`            | Albums fetched per artist               |
+| `scan.ignored_artists`       | `[]`            | Catalog IDs to exclude from scans       |
 
 ## Data storage
 

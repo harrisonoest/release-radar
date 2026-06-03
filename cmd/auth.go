@@ -25,7 +25,9 @@ Tokens are stored in the local database.`,
 		if err != nil {
 			return fmt.Errorf("failed to open store: %w", err)
 		}
-		defer store.Close()
+		if err := store.Close(); err != nil {
+			return fmt.Errorf("failed to close store: %w", err)
+		}
 
 		am, err := auth.NewAuthenticatorWithStore(cfg, store)
 		if err != nil {
