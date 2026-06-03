@@ -15,9 +15,7 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to open store: %w", err)
 		}
-		if err := store.Close(); err != nil {
-			return fmt.Errorf("failed to close store: %w", err)
-		}
+		defer store.Close()
 
 		count, err := store.CountArtists()
 		if err != nil {
