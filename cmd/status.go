@@ -45,6 +45,33 @@ var statusCmd = &cobra.Command{
 		} else {
 			fmt.Println("Last scan:       never")
 		}
+		sources, err := store.ListArtistSources()
+		if err != nil {
+			return fmt.Errorf("failed to list sources: %w", err)
+		}
+		uniqueSources := map[string]bool{}
+		for _, s := range sources {
+			uniqueSources[s.SourceType+"|"+s.SourceID] = true
+		}
+		fmt.Printf("Sources:        %d\n", len(uniqueSources))
+
+		counts, err := store.CountReleasesByState()
+		if err != nil {
+			return fmt.Errorf("failed to count releases: %w", err)
+		}
+		if len(counts) > 0 {
+			total := 0
+			for _, n := range counts {
+				total += n
+			}
+			fmt.Printf("Releases:       %d total", total)
+			for _, state := range []string{"added", "ignored", "seen"} {
+				if n, ok := counts[state]; ok {
+					fmt.Printf(" (%s: %d)", state, n)
+				}
+			}
+			fmt.Println()
+		}
 		fmt.Printf("Authenticated:   %v\n", authenticated)
 		return nil
 	},
