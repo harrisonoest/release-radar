@@ -1182,3 +1182,21 @@ func TestScan_SkipsKnownReleases(t *testing.T) {
 		t.Errorf("expected only 'fresh-1', got %+v", releases)
 	}
 }
+
+func TestScan_TracksPermanentFailures(t *testing.T) {
+	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1}}
+	client := newMockAPIClient()
+	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
+		return nil, errors.New("rate limited (429)")
+	}
+	s := New(cfg, client, nil, false)
+
+	_, err := s.Scan(context.Background(), []db.Artist{{CatalogID: "a1", Name: "A1"}}, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatalf("expected partial success, got %v", err)
+	}
+	if got := s.PermanentFailures(); got != 1 {
+		t.Errorf("expected 1 permanent failure, got %d", got)
+	}
+}

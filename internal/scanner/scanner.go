@@ -59,6 +59,14 @@ func (s *Scanner) SetProgressCallback(fn func(checked, found, errors int64)) {
 	s.onProgress = fn
 }
 
+func (s *Scanner) PermanentFailures() int64 {
+	return s.permFails.Load()
+}
+
+func (s *Scanner) Pruned() int64 {
+	return s.pruned.Load()
+}
+
 func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time) ([]Release, error) {
 	storefront, err := s.client.GetStorefront(ctx)
 	if err != nil {
@@ -142,11 +150,13 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 
 	wg.Wait()
 
-	if s.verbose && s.errors.Load() > 0 {
-		fmt.Printf("  Scan complete with %d errors (first: %v)\n", s.errors.Load(), errs[0])
+	permFails := s.permFails.Load()
+	if s.verbose && (s.errors.Load() > 0 || permFails > 0) {
+		fmt.Printf("  Scan complete with %d errors, %d permanent failures (first: %v)\n", s.errors.Load(), permFails, errs[0])
 	}
 
-	if len(errs) > 0 && len(releases) == 0 {
+	nonPermErrs := int64(len(errs)) - permFails
+	if nonPermErrs > 0 && len(releases) == 0 {
 		return nil, fmt.Errorf("all artist queries failed: %v", errs[0])
 	}
 
@@ -177,6 +187,7 @@ func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time)
 		return nil, err
 	}
 	if err != nil {
+		s.permFails.Add(1)
 		return nil, err
 	}
 
