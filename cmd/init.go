@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/harrisonoest/release-radar/internal/auth"
@@ -11,6 +12,8 @@ import (
 	"github.com/harrisonoest/release-radar/pkg/config"
 	"github.com/harrisonoest/release-radar/pkg/db"
 	"github.com/spf13/cobra"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 )
 
 var initAll bool
@@ -80,7 +83,47 @@ into the artists table without saving it as a permanent source. Accepts
 			)
 		}
 
-		if err := agg.Aggregate(ctx, sources); err != nil {
+		runAgg := func(agg *source.Aggregator, srcs []source.Source, total int) error {
+			var srcCount atomic.Int64
+			var srcName atomic.Value
+			var srcArtists atomic.Int64
+			srcName.Store("")
+
+			p := mpb.New(mpb.WithWidth(70))
+			bar := p.AddBar(int64(total),
+				mpb.BarFillerClearOnComplete(),
+				mpb.PrependDecorators(
+					decor.Any(func(decor.Statistics) string {
+						n := srcName.Load()
+						if s, ok := n.(string); ok && s != "" {
+							return fmt.Sprintf("Fetching %s", s)
+						}
+						return "Fetching sources"
+					}, decor.WCSyncSpace),
+				),
+				mpb.AppendDecorators(
+					decor.CountersNoUnit("%d / %d"),
+					decor.Name(" "),
+					decor.Any(func(decor.Statistics) string {
+						return fmt.Sprintf("artists: %d", srcArtists.Load())
+					}),
+				),
+			)
+
+			agg.OnSourceDone = func(sourceNum, totalSources int, name string, artistCount int) {
+				srcCount.Store(int64(sourceNum))
+				srcName.Store(name)
+				srcArtists.Store(int64(artistCount))
+				bar.SetCurrent(int64(sourceNum))
+			}
+
+			err := agg.Aggregate(ctx, srcs)
+			bar.SetTotal(int64(total), true)
+			p.Wait()
+			return err
+		}
+
+		if err := runAgg(agg, sources, len(sources)); err != nil {
 			return fmt.Errorf("aggregation failed: %w", err)
 		}
 
@@ -118,7 +161,7 @@ into the artists table without saving it as a permanent source. Accepts
 					}
 				},
 			}
-			if err := oneShotAgg.Aggregate(ctx, []source.Source{ps}); err != nil {
+			if err := runAgg(oneShotAgg, []source.Source{ps}, 1); err != nil {
 				return fmt.Errorf("playlist aggregation failed: %w", err)
 			}
 			fmt.Println("Merged artists from playlist (one-shot).")

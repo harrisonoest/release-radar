@@ -12,11 +12,12 @@ import (
 // Aggregator combines results from multiple Sources, resolves names to catalog
 // IDs, applies dedup rules, and writes to the store.
 type Aggregator struct {
-	Store          StoreWriter
-	Fetcher        Fetcher
-	Storefront     string
-	Logger         func(format string, args ...interface{})
-	SkipSourceRows bool
+	Store           StoreWriter
+	Fetcher         Fetcher
+	Storefront      string
+	Logger          func(format string, args ...interface{})
+	SkipSourceRows  bool
+	OnSourceDone    func(sourceNum, totalSources int, name string, artistCount int)
 }
 
 // StoreWriter is the subset of *db.Store the Aggregator needs.
@@ -31,13 +32,21 @@ func (a *Aggregator) Aggregate(ctx context.Context, sources []Source) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	rawBySource := make(map[string][]RawArtist, len(sources))
+	completed := 0
 	for _, src := range sources {
 		raw, err := src.Fetch(ctx, a.Fetcher)
 		if err != nil {
 			a.log("source %s fetch failed: %v", src.DisplayName(), err)
+			if a.OnSourceDone != nil {
+				a.OnSourceDone(completed, len(sources), src.DisplayName()+" (failed)", 0)
+			}
 			continue
 		}
 		rawBySource[src.Type()+"|"+src.ID()] = raw
+		completed++
+		if a.OnSourceDone != nil {
+			a.OnSourceDone(completed, len(sources), src.DisplayName(), len(raw))
+		}
 	}
 
 	nameToID, err := a.resolveNames(ctx, rawBySource)
