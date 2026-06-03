@@ -148,6 +148,10 @@ func Open(cacheDir string) (*Store, error) {
 		fmt.Fprintf(os.Stderr, "Warning: JSON migration failed: %v\n", err)
 	}
 
+	if err := store.backfillArtistSources(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: artist source backfill failed: %v\n", err)
+	}
+
 	return store, nil
 }
 
@@ -275,6 +279,16 @@ func (s *Store) migrateFromJSON(cacheDir string) error {
 	}
 
 	return nil
+}
+
+// backfillArtistSources adds a 'library_artists' source row for every existing
+// artist in the artists table that doesn't already have one. Idempotent: re-running
+// has no effect because of the composite primary key.
+func (s *Store) backfillArtistSources() error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO artist_sources (catalog_id, source_type, source_id, added_at)
+		SELECT catalog_id, 'library_artists', '', ? FROM artists
+		WHERE catalog_id != ''`, time.Now().UTC().Format(time.RFC3339))
+	return err
 }
 
 func (s *Store) ReplaceArtists(artists []Artist) error {

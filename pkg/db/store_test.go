@@ -940,3 +940,55 @@ func TestReleases_UpdateStateOnly(t *testing.T) {
 		t.Errorf("expected state 'ignored', got %q", fetched.State)
 	}
 }
+
+func TestArtistSources_BackfillOnOpen(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// First open: seed with artists
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("first Open failed: %v", err)
+	}
+	if err := store.ReplaceArtists([]Artist{
+		{LibraryID: "l1", CatalogID: "c1", Name: "Artist One", Href: "h1", LastSeen: time.Now().Format(time.RFC3339)},
+		{LibraryID: "l2", CatalogID: "c2", Name: "Artist Two", Href: "h2", LastSeen: time.Now().Format(time.RFC3339)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	// Second open: backfill should have run
+	store, err = Open(tmpDir)
+	if err != nil {
+		t.Fatalf("second Open failed: %v", err)
+	}
+	defer store.Close()
+
+	sources, err := store.ListArtistSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 backfilled sources, got %d", len(sources))
+	}
+	for _, src := range sources {
+		if src.SourceType != "library_artists" {
+			t.Errorf("expected source_type 'library_artists', got %q", src.SourceType)
+		}
+		if src.SourceID != "" {
+			t.Errorf("expected empty source_id, got %q", src.SourceID)
+		}
+	}
+
+	// Third open: backfill must be idempotent (no duplicates)
+	store.Close()
+	store, err = Open(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, _ = store.ListArtistSources()
+	if len(sources) != 2 {
+		t.Errorf("expected 2 sources after re-open, got %d", len(sources))
+	}
+	store.Close()
+}
