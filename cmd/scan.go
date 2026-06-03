@@ -181,7 +181,7 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 				return nil
 			}
 
-			pm := playlist.New(cfg, client)
+			pm := playlist.New(cfg, client, store)
 			storefront, err := client.GetStorefront(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get storefront: %w", err)

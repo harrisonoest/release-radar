@@ -9,20 +9,22 @@ import (
 	"github.com/harrisonoest/release-radar/internal/scanner"
 	"github.com/harrisonoest/release-radar/pkg/api"
 	"github.com/harrisonoest/release-radar/pkg/config"
+	"github.com/harrisonoest/release-radar/pkg/db"
 	"github.com/minchao/go-apple-music"
 )
 
 type Manager struct {
 	cfg        *config.Config
 	client     *api.Client
+	store      *db.Store
 	storefront string
 
 	getAlbumCatalogTrackIDsFunc func(ctx context.Context, albumID string) ([]songID, error)
 	getExistingCatalogIDsFunc   func(ctx context.Context, playlistID string) (map[string]bool, error)
 }
 
-func New(cfg *config.Config, client *api.Client) *Manager {
-	m := &Manager{cfg: cfg, client: client}
+func New(cfg *config.Config, client *api.Client, store *db.Store) *Manager {
+	m := &Manager{cfg: cfg, client: client, store: store}
 	m.getAlbumCatalogTrackIDsFunc = m.getAlbumCatalogTrackIDs
 	m.getExistingCatalogIDsFunc = m.getExistingCatalogIDs
 	return m

@@ -11,7 +11,7 @@ import (
 
 func TestNew(t *testing.T) {
 	cfg := &config.Config{}
-	m := New(cfg, nil)
+	m := New(cfg, nil, nil)
 
 	if m == nil {
 		t.Fatal("expected Manager, got nil")
@@ -20,7 +20,7 @@ func TestNew(t *testing.T) {
 
 func TestManager_SetStorefront(t *testing.T) {
 	cfg := &config.Config{}
-	m := New(cfg, nil)
+	m := New(cfg, nil, nil)
 
 	m.SetStorefront("gb")
 
@@ -74,7 +74,7 @@ func TestManager_AddReleases_EmptyReleases(t *testing.T) {
 			AutoCreate: true,
 		},
 	}
-	m := New(cfg, nil)
+	m := New(cfg, nil, nil)
 	m.SetStorefront("us")
 	m.getExistingCatalogIDsFunc = func(ctx context.Context, playlistID string) (map[string]bool, error) {
 		return map[string]bool{}, nil
@@ -98,7 +98,7 @@ func TestManager_AddReleases_WarnsOnMissingAlbum(t *testing.T) {
 			AutoCreate: true,
 		},
 	}
-	m := New(cfg, nil)
+	m := New(cfg, nil, nil)
 	m.SetStorefront("us")
 	m.getAlbumCatalogTrackIDsFunc = func(ctx context.Context, albumID string) ([]songID, error) {
 		return nil, errors.New("album not found")
