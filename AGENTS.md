@@ -8,7 +8,7 @@
 
 `go` is at `/usr/local/go/bin/go` — not in `$PATH`. The Makefile assumes `go` is on PATH; if not, use the full path.
 
-Tests live in a single file: `internal/auth/auth_test.go`. No integration tests exist — auth tests generate ephemeral ECDSA P-256 keys in `/tmp`.
+Tests live across multiple packages: `internal/auth/`, `internal/scanner/`, `internal/playlist/`, `internal/source/`, `pkg/api/`, `pkg/db/`, and `cmd/`. No integration tests exist — auth tests generate ephemeral ECDSA P-256 keys in `/tmp`.
 
 ## Architecture
 
@@ -17,12 +17,12 @@ cmd/{auth,init,scan,status,config}.go  → cobra commands, orchestration
 internal/auth/                         → JWT signing (ES256), OAuth proxy, token cache
 internal/scanner/                      → concurrent artist→album pipeline, date filtering
 internal/playlist/                     → find/create playlist, add tracks with dedup
+internal/source/                       → multi-source artist aggregation (Source interface, Aggregator)
 pkg/api/                               → Apple Music API client (wraps go-apple-music)
 pkg/db/                                → SQLite store (modernc.org/sqlite, pure Go, no CGO)
 pkg/config/                            → Viper/TOML config loading
 ```
 
-`internal/cache/` is legacy — replaced by `pkg/db/` but not yet deleted.
 
 ## Key dependencies
 
