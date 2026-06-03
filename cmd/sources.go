@@ -2,8 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/harrisonoest/release-radar/internal/auth"
+	"github.com/harrisonoest/release-radar/internal/source"
+	"github.com/harrisonoest/release-radar/pkg/api"
+	"github.com/harrisonoest/release-radar/pkg/config"
 	"github.com/harrisonoest/release-radar/pkg/db"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +70,131 @@ var sourcesListCmd = &cobra.Command{
 	},
 }
 
+var sourcesAddCmd = &cobra.Command{
+	Use:   "add <type> [id]",
+	Short: "Add a new artist source",
+	Long: `Add a new artist source. Type is one of: library_artists, library_albums, library_songs, liked_songs, playlist.
+For 'playlist', the id is the playlist's Apple Music ID (or use 'name:NAME' to resolve by name).`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sourceType := args[0]
+		sourceID := ""
+		if len(args) > 1 {
+			sourceID = args[1]
+		}
+
+		valid := map[string]bool{
+			"library_artists": true, "library_albums": true,
+			"library_songs": true, "liked_songs": true, "playlist": true,
+		}
+		if !valid[sourceType] {
+			return fmt.Errorf("invalid source type: %s (valid: library_artists, library_albums, library_songs, liked_songs, playlist)", sourceType)
+		}
+		if sourceType == "playlist" && sourceID == "" {
+			return fmt.Errorf("playlist source requires an id (or 'name:PLAYLIST NAME')")
+		}
+
+		if sourceType == "playlist" && len(sourceID) > 5 && sourceID[:5] == "name:" {
+			playlistName := sourceID[5:]
+			client, err := apiClientForSource()
+			if err != nil {
+				return err
+			}
+			playlists, err := client.GetAllLibraryPlaylists(cmd.Context())
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, p := range playlists {
+				if p.Name == playlistName {
+					sourceID = p.ID
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("playlist named %q not found in your library", playlistName)
+			}
+		}
+
+		src, err := source.Build(sourceType, sourceID)
+		if err != nil {
+			return err
+		}
+
+		store, err := db.Open("")
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		client, err := apiClientForSource()
+		if err != nil {
+			return err
+		}
+		storefront, err := client.GetStorefront(cmd.Context())
+		if err != nil {
+			return err
+		}
+
+		agg := &source.Aggregator{
+			Store:      store,
+			Fetcher:    client,
+			Storefront: storefront,
+			Logger:     func(f string, args ...interface{}) { fmt.Fprintf(os.Stderr, f+"\n", args...) },
+		}
+		if err := agg.Aggregate(cmd.Context(), []source.Source{src}); err != nil {
+			return err
+		}
+
+		fmt.Printf("Added source: %s\n", src.DisplayName())
+		return nil
+	},
+}
+
+var sourcesRemoveCmd = &cobra.Command{
+	Use:   "remove <type> [id]",
+	Short: "Remove a source (artists from other sources remain)",
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sourceType := args[0]
+		sourceID := ""
+		if len(args) > 1 {
+			sourceID = args[1]
+		}
+
+		store, err := db.Open("")
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+
+		if _, err := store.DeleteArtistSource(sourceType, sourceID); err != nil {
+			return err
+		}
+		fmt.Printf("Removed source: %s (id=%s)\n", sourceType, sourceID)
+		return nil
+	},
+}
+
+func apiClientForSource() (*api.Client, error) {
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return nil, err
+	}
+	store, err := db.Open("")
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	authenticator, err := auth.NewAuthenticatorWithStore(cfg, store)
+	if err != nil {
+		return nil, err
+	}
+	return api.NewClient(cfg, authenticator)
+}
+
 func init() {
 	sourcesCmd.AddCommand(sourcesListCmd)
+	sourcesCmd.AddCommand(sourcesAddCmd)
+	sourcesCmd.AddCommand(sourcesRemoveCmd)
 }

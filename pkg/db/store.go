@@ -361,6 +361,15 @@ func (s *Store) ListArtistSources() ([]ArtistSource, error) {
 	return sources, rows.Err()
 }
 
+func (s *Store) DeleteArtistSource(sourceType, sourceID string) (int64, error) {
+	res, err := s.db.Exec("DELETE FROM artist_sources WHERE source_type = ? AND source_id = ?",
+		sourceType, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (s *Store) UpsertRelease(r Release) error {
 	_, err := s.db.Exec(`INSERT INTO releases (album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
