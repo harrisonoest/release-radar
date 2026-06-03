@@ -874,3 +874,69 @@ func TestReleases_SkippedIDs(t *testing.T) {
 		t.Error("'ignored' releases should be in skip set")
 	}
 }
+
+func TestReleases_ListByStateAndCounts(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	seed := []Release{
+		{AlbumID: "a1", CatalogArtistID: "x", Name: "n1", State: "added", FirstSeenAt: now, ReleaseDate: "2026-01-01"},
+		{AlbumID: "a2", CatalogArtistID: "x", Name: "n2", State: "ignored", FirstSeenAt: now, ReleaseDate: "2026-02-01"},
+		{AlbumID: "a3", CatalogArtistID: "y", Name: "n3", State: "seen", FirstSeenAt: now, ReleaseDate: "2026-03-01"},
+		{AlbumID: "a4", CatalogArtistID: "y", Name: "n4", State: "added", FirstSeenAt: now, ReleaseDate: "2026-04-01"},
+	}
+	for _, r := range seed {
+		if err := store.UpsertRelease(r); err != nil {
+			t.Fatalf("UpsertRelease %s: %v", r.AlbumID, err)
+		}
+	}
+
+	added, err := store.ListReleasesByState("added")
+	if err != nil {
+		t.Fatalf("ListReleasesByState: %v", err)
+	}
+	if len(added) != 2 {
+		t.Errorf("expected 2 added, got %d", len(added))
+	}
+
+	counts, err := store.CountReleasesByState()
+	if err != nil {
+		t.Fatalf("CountReleasesByState: %v", err)
+	}
+	wantCounts := map[string]int{"added": 2, "ignored": 1, "seen": 1}
+	for state, want := range wantCounts {
+		if counts[state] != want {
+			t.Errorf("state %s: got %d, want %d", state, counts[state], want)
+		}
+	}
+}
+
+func TestReleases_UpdateStateOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	rel := Release{
+		AlbumID: "a1", CatalogArtistID: "x", Name: "n1",
+		State: "seen", FirstSeenAt: now, ReleaseDate: "2026-01-01",
+	}
+	if err := store.UpsertRelease(rel); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateReleaseState("a1", "ignored"); err != nil {
+		t.Fatal(err)
+	}
+	fetched, _ := store.GetRelease("a1")
+	if fetched.State != "ignored" {
+		t.Errorf("expected state 'ignored', got %q", fetched.State)
+	}
+}

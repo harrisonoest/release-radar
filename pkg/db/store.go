@@ -397,6 +397,55 @@ func (s *Store) SkippedReleaseIDs() (map[string]bool, error) {
 	return ids, rows.Err()
 }
 
+func (s *Store) ListReleasesByState(state string) ([]Release, error) {
+	rows, err := s.db.Query(`SELECT album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at
+        FROM releases WHERE state = ? ORDER BY release_date DESC`, state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var releases []Release
+	for rows.Next() {
+		var r Release
+		if err := rows.Scan(&r.AlbumID, &r.CatalogArtistID, &r.ArtistName, &r.Name, &r.ReleaseDate,
+			&r.TrackCount, &r.State, &r.FirstSeenAt, &r.AddedAt); err != nil {
+			return nil, err
+		}
+		releases = append(releases, r)
+	}
+	return releases, rows.Err()
+}
+
+func (s *Store) CountReleasesByState() (map[string]int, error) {
+	rows, err := s.db.Query("SELECT state, COUNT(*) FROM releases GROUP BY state")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var state string
+		var count int
+		if err := rows.Scan(&state, &count); err != nil {
+			return nil, err
+		}
+		counts[state] = count
+	}
+	return counts, rows.Err()
+}
+
+func (s *Store) UpdateReleaseState(albumID, state string) error {
+	_, err := s.db.Exec("UPDATE releases SET state = ? WHERE album_id = ?", state, albumID)
+	return err
+}
+
+func (s *Store) DeleteRelease(albumID string) error {
+	_, err := s.db.Exec("DELETE FROM releases WHERE album_id = ?", albumID)
+	return err
+}
+
 func (s *Store) CountArtists() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM artists").Scan(&count)
