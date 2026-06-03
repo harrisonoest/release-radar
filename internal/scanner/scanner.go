@@ -24,7 +24,7 @@ type Release struct {
 
 type APIClient interface {
 	GetStorefront(ctx context.Context) (string, error)
-	GetArtistAlbums(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error)
+	GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error)
 }
 
 type Scanner struct {
@@ -66,11 +66,6 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 	}
 	s.storefront = storefront
 
-	albumLimit := s.cfg.Scan.MaxAlbumsPerArtist
-	if albumLimit <= 0 {
-		albumLimit = 10
-	}
-
 	sem := make(chan struct{}, s.concurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -99,7 +94,7 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			found, err := s.checkArtist(ctx, a, since, albumLimit)
+			found, err := s.checkArtist(ctx, a, since)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("%s: %w", a.Name, err))
@@ -158,7 +153,7 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 	return releases, nil
 }
 
-func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time, albumLimit int) ([]Release, error) {
+func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time) ([]Release, error) {
 	if a.CatalogID == "" {
 		return nil, fmt.Errorf("no catalog ID")
 	}
@@ -170,7 +165,7 @@ func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time,
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		result, err = s.client.GetArtistAlbums(ctx, s.storefront, a.CatalogID, albumLimit)
+		result, err = s.client.GetArtistAlbums(ctx, s.storefront, a.CatalogID, since)
 		if err == nil {
 			break
 		}

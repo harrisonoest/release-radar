@@ -231,7 +231,7 @@ func TestGetArtistAlbums_Success(t *testing.T) {
 	}
 	client.BaseURL = baseURL
 
-	result, err := client.GetArtistAlbums(context.Background(), "us", "123", 25)
+	result, err := client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err != nil {
 		t.Fatalf("GetArtistAlbums failed: %v", err)
 	}
@@ -295,8 +295,9 @@ func TestGetArtistAlbums_Pagination(t *testing.T) {
 		t.Fatalf("NewClient failed: %v", err)
 	}
 	client.BaseURL = baseURL
+	client.scanPageSizeHint = 3
 
-	result, err := client.GetArtistAlbums(context.Background(), "us", "123", 3)
+	result, err := client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err != nil {
 		t.Fatalf("GetArtistAlbums failed: %v", err)
 	}
@@ -336,7 +337,7 @@ func TestGetArtistAlbums_NotFound(t *testing.T) {
 	}
 	client.BaseURL = baseURL
 
-	result, err := client.GetArtistAlbums(context.Background(), "us", "123", 25)
+	result, err := client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err != nil {
 		t.Fatalf("GetArtistAlbums should not error on 404: %v", err)
 	}
@@ -373,7 +374,7 @@ func TestGetArtistAlbums_RateLimited(t *testing.T) {
 	}
 	client.BaseURL = baseURL
 
-	_, err = client.GetArtistAlbums(context.Background(), "us", "123", 25)
+	_, err = client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err == nil {
 		t.Fatal("expected error for 429 response")
 	}
@@ -404,7 +405,7 @@ func TestGetArtistAlbums_HTTPError(t *testing.T) {
 	}
 	client.BaseURL = baseURL
 
-	_, err = client.GetArtistAlbums(context.Background(), "us", "123", 25)
+	_, err = client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -438,7 +439,7 @@ func TestGetArtistAlbums_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = client.GetArtistAlbums(ctx, "us", "123", 25)
+	_, err = client.GetArtistAlbums(ctx, "us", "123", time.Now())
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}

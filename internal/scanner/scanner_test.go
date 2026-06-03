@@ -18,15 +18,15 @@ import (
 
 type mockAPIClient struct {
 	getStorefrontFn   func(ctx context.Context) (string, error)
-	getArtistAlbumsFn func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error)
+	getArtistAlbumsFn func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error)
 }
 
 func (m *mockAPIClient) GetStorefront(ctx context.Context) (string, error) {
 	return m.getStorefrontFn(ctx)
 }
 
-func (m *mockAPIClient) GetArtistAlbums(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
-	return m.getArtistAlbumsFn(ctx, storefront, artistID, limit)
+func (m *mockAPIClient) GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
+	return m.getArtistAlbumsFn(ctx, storefront, artistID, since)
 }
 
 func newMockAPIClient() *mockAPIClient {
@@ -289,7 +289,7 @@ func TestScanner_Scan(t *testing.T) {
 				}
 				return tt.storefront, nil
 			}
-			client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+			client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 				if tt.albumErr != nil {
 					return nil, tt.albumErr
 				}
@@ -340,7 +340,7 @@ func TestScanner_Scan_Deduplication(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return &api.ArtistAlbumsResult{
 			Albums: []applemusic.Album{album},
 		}, nil
@@ -385,7 +385,7 @@ func TestScanner_Scan_Concurrency(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		mu.Lock()
 		checkedArtists[artistID] = true
 		atomic.AddInt64(&checkCount, 1)
@@ -444,7 +444,7 @@ func TestScanner_Scan_ContextCancellation(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -503,7 +503,7 @@ func TestScanner_Scan_ProgressCallback(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		albumID := "album1"
 		if artistID == "2" {
 			albumID = "album2"
@@ -577,7 +577,7 @@ func TestScanner_Scan_ErrorHandling(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		if artistID == "error" {
 			return nil, errors.New("API error")
 		}
@@ -693,7 +693,7 @@ func TestScanner_checkArtist(t *testing.T) {
 			client.getStorefrontFn = func(ctx context.Context) (string, error) {
 				return tt.storefront, nil
 			}
-			client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+			client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 				return tt.albumResult, tt.albumErr
 			}
 
@@ -704,7 +704,7 @@ func TestScanner_checkArtist(t *testing.T) {
 			}
 
 			s := New(cfg, client, nil, false)
-			releases, err := s.checkArtist(context.Background(), tt.artist, since, 10)
+			releases, err := s.checkArtist(context.Background(), tt.artist, since)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("checkArtist() error = %v, wantErr %v", err, tt.wantErr)
@@ -728,7 +728,7 @@ func TestScanner_checkArtist_RateLimitRetry(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		mu.Lock()
 		attemptCount++
 		mu.Unlock()
@@ -761,7 +761,7 @@ func TestScanner_checkArtist_RateLimitRetry(t *testing.T) {
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
-	releases, err := s.checkArtist(context.Background(), artist, since, 10)
+	releases, err := s.checkArtist(context.Background(), artist, since)
 
 	if err != nil {
 		t.Fatalf("checkArtist() error = %v", err)
@@ -785,7 +785,7 @@ func TestScanner_checkArtist_RateLimitExhausted(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return nil, fmt.Errorf("rate limited (429)")
 	}
 
@@ -799,7 +799,7 @@ func TestScanner_checkArtist_RateLimitExhausted(t *testing.T) {
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
-	releases, err := s.checkArtist(context.Background(), artist, since, 10)
+	releases, err := s.checkArtist(context.Background(), artist, since)
 
 	if err == nil {
 		t.Error("expected error after retries exhausted")
@@ -819,7 +819,7 @@ func TestScanner_checkArtist_ContextCancellation(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -843,7 +843,7 @@ func TestScanner_checkArtist_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	releases, err := s.checkArtist(ctx, artist, since, 10)
+	releases, err := s.checkArtist(ctx, artist, since)
 
 	if err == nil {
 		t.Error("expected context cancellation error")
@@ -861,7 +861,7 @@ func TestScanner_checkArtist_ParseError(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return &api.ArtistAlbumsResult{
 			Albums: []applemusic.Album{
 				{
@@ -886,7 +886,7 @@ func TestScanner_checkArtist_ParseError(t *testing.T) {
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
-	releases, err := s.checkArtist(context.Background(), artist, since, 10)
+	releases, err := s.checkArtist(context.Background(), artist, since)
 
 	if err != nil {
 		t.Fatalf("checkArtist() error = %v", err)
@@ -897,52 +897,6 @@ func TestScanner_checkArtist_ParseError(t *testing.T) {
 	}
 }
 
-func TestScanner_checkArtist_AlbumLimit(t *testing.T) {
-	since := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	client := newMockAPIClient()
-	client.getStorefrontFn = func(ctx context.Context) (string, error) {
-		return "us", nil
-	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
-		if limit != 5 {
-			t.Errorf("expected limit 5, got %d", limit)
-		}
-		return &api.ArtistAlbumsResult{
-			Albums: []applemusic.Album{
-				{
-					Id: "album1",
-					Attributes: applemusic.AlbumAttributes{
-						Name:        "Album1",
-						ReleaseDate: "2023-06-15",
-						TrackCount:  10,
-					},
-				},
-			},
-		}, nil
-	}
-
-	cfg := &config.Config{
-		Scan: config.ScanConfig{
-			MaxAlbumsPerArtist: 5,
-		},
-	}
-
-	s := New(cfg, client, nil, false)
-
-	artist := db.Artist{CatalogID: "123", Name: "Artist"}
-
-	releases, err := s.checkArtist(context.Background(), artist, since, 5)
-
-	if err != nil {
-		t.Fatalf("checkArtist() error = %v", err)
-	}
-
-	if len(releases) != 1 {
-		t.Errorf("releases = %d, want 1", len(releases))
-	}
-}
-
 func TestScanner_Scan_EmptyArtists(t *testing.T) {
 	since := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -950,7 +904,7 @@ func TestScanner_Scan_EmptyArtists(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return &api.ArtistAlbumsResult{}, nil
 	}
 
@@ -981,7 +935,7 @@ func TestScanner_Scan_AllFailures(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return nil, errors.New("API error")
 	}
 
@@ -1017,7 +971,7 @@ func TestScanner_Scan_PartialSuccess(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		if artistID == "error" {
 			return nil, errors.New("API error")
 		}
@@ -1101,7 +1055,7 @@ func TestScanner_Scan_DateFormats(t *testing.T) {
 			client.getStorefrontFn = func(ctx context.Context) (string, error) {
 				return "us", nil
 			}
-			client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+			client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 				return &api.ArtistAlbumsResult{
 					Albums: []applemusic.Album{
 						{
@@ -1146,7 +1100,7 @@ func TestScanner_Scan_Parallel(t *testing.T) {
 	client.getStorefrontFn = func(ctx context.Context) (string, error) {
 		return "us", nil
 	}
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		time.Sleep(10 * time.Millisecond)
 
 		return &api.ArtistAlbumsResult{
@@ -1209,7 +1163,7 @@ func TestScan_SkipsKnownReleases(t *testing.T) {
 	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1, MaxAlbumsPerArtist: 10}}
 	client := newMockAPIClient()
 	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
-	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return &api.ArtistAlbumsResult{
 			Albums: []applemusic.Album{
 				{Id: "added-1", Attributes: applemusic.AlbumAttributes{Name: "Added", ReleaseDate: "2026-06-01", TrackCount: 5}},

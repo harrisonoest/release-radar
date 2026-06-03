@@ -54,12 +54,13 @@ type ArtistAlbumsResult struct {
 
 type Client struct {
 	*applemusic.Client
-	storefront string
+	storefront       string
+	scanPageSizeHint int
 }
 
 type ClientInterface interface {
 	GetStorefront(ctx context.Context) (string, error)
-	GetArtistAlbums(ctx context.Context, storefront, artistID string, limit int) (*ArtistAlbumsResult, error)
+	GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*ArtistAlbumsResult, error)
 }
 
 func NewClient(cfg *config.Config, authenticator *auth.Authenticator) (*Client, error) {
@@ -97,7 +98,14 @@ func (c *Client) GetStorefront(ctx context.Context) (string, error) {
 	return c.storefront, nil
 }
 
-func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID string, limit int) (*ArtistAlbumsResult, error) {
+func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*ArtistAlbumsResult, error) {
+	watermark := since.AddDate(0, 0, -30)
+	pageSize := c.scanPageSize()
+	if pageSize <= 0 {
+		pageSize = 25
+	}
+	filter := "albums,singles,eps,compilations,live-albums"
+
 	var all []applemusic.Album
 	offset := 0
 
@@ -110,7 +118,8 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 	}
 
 	for {
-		u := fmt.Sprintf("v1/catalog/%s/artists/%s/albums?limit=%d&offset=%d", storefront, artistID, limit, offset)
+		u := fmt.Sprintf("v1/catalog/%s/artists/%s/albums?limit=%d&offset=%d&filter[albums]=%s",
+			storefront, artistID, pageSize, offset, filter)
 		req, err := c.NewRequest("GET", u, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -130,18 +139,50 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 				return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 			}
 		}
-
 		if err != nil {
 			return nil, fmt.Errorf("API request failed: %w", err)
 		}
 
 		all = append(all, result.Data...)
 
-		if len(result.Data) < limit || len(all) >= result.Meta.Total {
+		hitWatermark := false
+		for _, album := range result.Data {
+			if album.Attributes.ReleaseDate == "" {
+				continue
+			}
+			t, parseErr := time.Parse("2006-01-02", album.Attributes.ReleaseDate)
+			if parseErr == nil {
+				if t.Before(watermark) {
+					hitWatermark = true
+					break
+				}
+				continue
+			}
+			for _, layout := range []string{"2006-01", "2006"} {
+				if pt, perr := time.Parse(layout, album.Attributes.ReleaseDate); perr == nil {
+					if pt.Before(watermark) {
+						hitWatermark = true
+						break
+					}
+				}
+			}
+			if hitWatermark {
+				break
+			}
+		}
+
+		if hitWatermark || len(result.Data) < pageSize || (result.Meta.Total > 0 && len(all) >= result.Meta.Total) {
 			return &ArtistAlbumsResult{Albums: all, Total: result.Meta.Total}, nil
 		}
-		offset += limit
+		offset += pageSize
 	}
+}
+
+func (c *Client) scanPageSize() int {
+	if c.scanPageSizeHint > 0 {
+		return c.scanPageSizeHint
+	}
+	return 25
 }
 
 type LibraryArtistAlbumsResult struct {
