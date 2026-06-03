@@ -176,6 +176,58 @@ var sourcesRemoveCmd = &cobra.Command{
 	},
 }
 
+var sourcesScanCmd = &cobra.Command{
+	Use:   "scan",
+	Short: "Re-fetch all enabled sources and update the artist set",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load(cfgFile)
+		if err != nil {
+			return err
+		}
+		store, err := db.Open("")
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		authenticator, err := auth.NewAuthenticatorWithStore(cfg, store)
+		if err != nil {
+			return err
+		}
+		client, err := api.NewClient(cfg, authenticator)
+		if err != nil {
+			return err
+		}
+		storefront, err := client.GetStorefront(cmd.Context())
+		if err != nil {
+			return err
+		}
+		sources := []source.Source{
+			&source.LibraryArtists{},
+			&source.LibraryAlbums{},
+			&source.LibrarySongs{},
+			&source.LikedSongs{},
+		}
+		playlistIDs, _ := store.PlaylistSourceIDs()
+		for _, pid := range playlistIDs {
+			ps, _ := source.Build("playlist", pid)
+			if ps != nil {
+				sources = append(sources, ps)
+			}
+		}
+		agg := &source.Aggregator{
+			Store:      store,
+			Fetcher:    client,
+			Storefront: storefront,
+			Logger:     func(f string, args ...interface{}) { fmt.Fprintf(os.Stderr, f+"\n", args...) },
+		}
+		if err := agg.Aggregate(cmd.Context(), sources); err != nil {
+			return err
+		}
+		fmt.Println("Sources refreshed.")
+		return nil
+	},
+}
+
 func apiClientForSource() (*api.Client, error) {
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
@@ -197,4 +249,5 @@ func init() {
 	sourcesCmd.AddCommand(sourcesListCmd)
 	sourcesCmd.AddCommand(sourcesAddCmd)
 	sourcesCmd.AddCommand(sourcesRemoveCmd)
+	sourcesCmd.AddCommand(sourcesScanCmd)
 }

@@ -370,6 +370,23 @@ func (s *Store) DeleteArtistSource(sourceType, sourceID string) (int64, error) {
 	return res.RowsAffected()
 }
 
+func (s *Store) PlaylistSourceIDs() ([]string, error) {
+	rows, err := s.db.Query("SELECT DISTINCT source_id FROM artist_sources WHERE source_type = 'playlist'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) UpsertRelease(r Release) error {
 	_, err := s.db.Exec(`INSERT INTO releases (album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

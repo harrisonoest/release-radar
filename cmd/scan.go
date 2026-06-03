@@ -24,6 +24,8 @@ var (
 	scanSince        string
 	scanConcurrency  int
 	scanLimitArtists int
+	scanIncludeSeen  bool
+	scanNoBackfill   bool
 
 	scanCmd = &cobra.Command{
 		Use:   "scan",
@@ -130,6 +132,7 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 			}
 
 			scan := scanner.New(cfg, client, store, verbose)
+			scan.SetIncludeSeen(scanIncludeSeen)
 
 			var foundCount atomic.Int64
 			var errCount atomic.Int64
@@ -171,14 +174,16 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 			pm.SetStorefront(storefront)
 
 			// Lazy backfill: if releases table is empty, walk the playlist and seed it.
-			if err := pm.EnsurePlaylistSilent(ctx); err == nil {
-				playlistID, _ := pm.EnsurePlaylist(ctx)
-				if playlistID != "" {
-					n, berr := pm.BackfillFromPlaylist(ctx, playlistID)
-					if berr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: backfill failed: %v\n", berr)
-					} else if n > 0 && verbose {
-						fmt.Printf("Backfilled %d releases from existing playlist.\n", n)
+			if !scanNoBackfill {
+				if err := pm.EnsurePlaylistSilent(ctx); err == nil {
+					playlistID, _ := pm.EnsurePlaylist(ctx)
+					if playlistID != "" {
+						n, berr := pm.BackfillFromPlaylist(ctx, playlistID)
+						if berr != nil {
+							fmt.Fprintf(os.Stderr, "Warning: backfill failed: %v\n", berr)
+						} else if n > 0 && verbose {
+							fmt.Printf("Backfilled %d releases from existing playlist.\n", n)
+						}
 					}
 				}
 			}
@@ -188,6 +193,13 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 			fmt.Println()
 			if err != nil {
 				return fmt.Errorf("scan failed: %w", err)
+			}
+
+			if n := scan.PermanentFailures(); n > 0 {
+				fmt.Printf("\n%d artists failed permanently (after 5 retries). Run with -v to see which.\n", n)
+			}
+			if n := scan.ZeroAlbumArtists(); n > 0 {
+				fmt.Printf("%d artists have no albums.\n", n)
 			}
 
 			if len(releases) == 0 {
@@ -235,6 +247,8 @@ func init() {
 	scanCmd.Flags().StringVar(&scanSince, "since", "", "check releases since date (YYYY-MM-DD)")
 	scanCmd.Flags().IntVarP(&scanConcurrency, "concurrency", "c", 0, "number of concurrent artist queries (default from config)")
 	scanCmd.Flags().IntVar(&scanLimitArtists, "limit-artists", 0, "limit to first N artists (for testing)")
+	scanCmd.Flags().BoolVar(&scanIncludeSeen, "include-seen", false, "include releases in 'seen' state in the results (TODO: surface them in output)")
+	scanCmd.Flags().BoolVar(&scanNoBackfill, "no-backfill", false, "skip lazy backfill on first run")
 }
 
 func printReleases(releases []scanner.Release) {

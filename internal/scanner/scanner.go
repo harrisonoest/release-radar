@@ -34,10 +34,12 @@ type Scanner struct {
 	concurrency int
 	storefront  string
 	verbose     bool
+	includeSeen bool
 	checked     atomic.Int64
 	errors      atomic.Int64
 	permFails   atomic.Int64
 	pruned      atomic.Int64
+	zeroAlbums  atomic.Int64
 	onProgress  func(checked, found, errors int64)
 }
 
@@ -59,12 +61,20 @@ func (s *Scanner) SetProgressCallback(fn func(checked, found, errors int64)) {
 	s.onProgress = fn
 }
 
+func (s *Scanner) SetIncludeSeen(v bool) {
+	s.includeSeen = v
+}
+
 func (s *Scanner) PermanentFailures() int64 {
 	return s.permFails.Load()
 }
 
 func (s *Scanner) Pruned() int64 {
 	return s.pruned.Load()
+}
+
+func (s *Scanner) ZeroAlbumArtists() int64 {
+	return s.zeroAlbums.Load()
 }
 
 func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time) ([]Release, error) {
@@ -212,6 +222,10 @@ func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time)
 				TrackCount:  int(album.Attributes.TrackCount),
 			})
 		}
+	}
+
+	if len(result.Albums) == 0 {
+		s.zeroAlbums.Add(1)
 	}
 
 	return releases, nil
