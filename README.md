@@ -10,11 +10,13 @@ release-radar init       # Pull your library artists
 release-radar scan       # Check for new releases, add to playlist
 ```
 
-`init` crawls your library artists, resolves each to its catalog ID, and deduplicates — collaborative entries like "Joris Voorn & Goodboys" are collapsed into the standalone artist. Only artists with at least one standalone library entry are tracked.
+`init` pulls artists from your library (and optionally other sources via `--all` or `--from-playlist`), resolves names to catalog IDs, and deduplicates — collaborative entries like "Joris Voorn & Goodboys" are collapsed into the standalone artist. Only artists with at least one standalone entry are tracked.
 
-`scan` queries each artist's catalog albums, compares release dates against your last scan timestamp, and adds new releases to your "Release Radar" playlist. Duplicate albums are skipped automatically. Artists on the ignore list are excluded from scans.
+`scan` queries each artist's catalog albums, skips releases already in `added` or `ignored` state, compares release dates against your last scan timestamp, and adds new releases to your "Release Radar" playlist. On first run, it lazy-backfills existing playlist tracks into the releases table.
 
-Both commands display live progress bars in the terminal.
+`sources` manages where your artists come from — library, albums, songs, liked songs, and external playlists. `releases` lets you view and manage the state of every tracked release.
+
+`scan` displays a live progress bar. `init` and `sources scan` log progress when `-v` is set.
 
 All data is stored in a local SQLite database. JSON files from earlier versions are migrated automatically on first run.
 
@@ -81,7 +83,6 @@ auto_create = true
 
 [scan]
 concurrency = 5
-max_albums_per_artist = 10
 ```
 
 ### 3. Authenticate
@@ -98,13 +99,22 @@ Opens your browser for Apple Music sign-in via MusicKit JS. Tokens are stored in
 release-radar init
 ```
 
-Fetches all library artists, resolves catalog IDs, and deduplicates collaborative entries. A ~7700-entry library typically yields ~2900 unique standalone artists.
+Fetches all library artists (and optional additional sources), resolves catalog IDs, and deduplicates collaborative entries. A ~7700-entry library typically yields ~2900 unique standalone artists.
 
 ## Usage
 
 ```bash
 # First-time setup
-release-radar init              # Pull + deduplicate artists (~2 min)
+release-radar init              # Pull + deduplicate from library (~2 min)
+release-radar init --all        # Include library albums, songs, and liked songs
+release-radar init --from-playlist "name:Discover Weekly"   # Also pull from a playlist
+
+# Manage sources
+release-radar sources list              # List configured sources
+release-radar sources add playlist <id> # Add a playlist source
+release-radar sources add liked_songs   # Add liked songs source
+release-radar sources remove playlist <id>
+release-radar sources scan              # Re-fetch all sources
 
 # Scan for new releases
 release-radar scan              # Check all artists, add to playlist
@@ -112,10 +122,19 @@ release-radar scan --dry-run    # Preview without modifying playlist
 release-radar scan --since 2026-01-01     # Override lookback date
 release-radar scan --limit-artists 100    # Test with first 100 artists
 release-radar scan --concurrency 3       # Adjust parallelism
+release-radar scan --no-backfill         # Skip lazy backfill on first run
 release-radar scan -v           # Verbose output
 
+# Manage releases
+release-radar releases list               # List releases (default: added + ignored)
+release-radar releases list --state seen  # List new/unprocessed releases
+release-radar releases show <album_id>    # Show full details for a release
+release-radar releases ignore <album_id>  # Ignore a release
+release-radar releases unignore <album_id>
+release-radar releases remove <album_id>  # Delete from tracking
+
 # Info
-release-radar status            # Show tracked artist count + last scan
+release-radar status            # Show tracked artist count + last scan + releases by state
 release-radar config show       # Show current configuration
 
 # Ignore artists (exclude from scans)
@@ -141,12 +160,11 @@ Run `scan` on a cron job for weekly updates:
 | `playlist.auto_create`       | `true`          | Create playlist if not found            |
 | `playlist.id`                | —               | Override playlist by ID instead of name |
 | `scan.concurrency`           | `5`             | Concurrent artist queries               |
-| `scan.max_albums_per_artist` | `10`            | Albums fetched per artist               |
 | `scan.ignored_artists`       | `[]`            | Catalog IDs to exclude from scans       |
 
 ## Data storage
 
-All data is stored in a single SQLite database at `~/.config/release-radar/release-radar.db` using [WAL mode](https://www.sqlite.org/wal.html) with a 5-second busy timeout.
+All data is stored in a single SQLite database at `~/.config/release-radar/release-radar.db` using [WAL mode](https://www.sqlite.org/wal.html) with a 5-second busy timeout. Six tables: `artists`, `scan_state`, `auth`, `ignored_artists`, `artist_sources`, and `releases`.
 
 ```
 ~/.config/release-radar/
@@ -177,6 +195,12 @@ sqlite3 ~/.config/release-radar/release-radar.db "SELECT music_user_token != '' 
 
 # List ignored artists
 sqlite3 ~/.config/release-radar/release-radar.db "SELECT * FROM ignored_artists"
+
+# List configured sources
+sqlite3 ~/.config/release-radar/release-radar.db "SELECT * FROM artist_sources"
+
+# Show releases by state
+sqlite3 ~/.config/release-radar/release-radar.db "SELECT state, COUNT(*) FROM releases GROUP BY state"
 ```
 
 ### Schema
@@ -213,6 +237,28 @@ CREATE TABLE ignored_artists (
     name       TEXT NOT NULL,
     ignored_at TEXT NOT NULL
 );
+
+-- Artist provenance (multi-source tracking)
+CREATE TABLE artist_sources (
+    catalog_id  TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id   TEXT NOT NULL DEFAULT '',
+    added_at    TEXT NOT NULL,
+    PRIMARY KEY (catalog_id, source_type, source_id)
+);
+
+-- Release state machine (per-album lifecycle)
+CREATE TABLE releases (
+    album_id          TEXT PRIMARY KEY,
+    catalog_artist_id TEXT NOT NULL,
+    artist_name       TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    release_date      TEXT NOT NULL,
+    track_count       INTEGER NOT NULL DEFAULT 0,
+    state             TEXT NOT NULL DEFAULT 'seen',
+    first_seen_at     TEXT NOT NULL,
+    added_at          TEXT
+);
 ```
 
 ## Architecture
@@ -220,20 +266,23 @@ CREATE TABLE ignored_artists (
 ```
 cmd/                    CLI commands (cobra)
   auth.go               OAuth proxy server + MusicKit JS page
-  init.go               Artist fetch + catalog dedup + progress bar
+  init.go               Multi-source artist aggregation
   scan.go               Scan orchestration + playlist wiring
   status.go             Info display
   config.go             Config inspection
   ignore.go             Artist ignore list management
+  sources.go            Source add/remove/list/scan
+  releases.go           Release list/show/ignore/unignore/remove
   root.go               Root command + shared flags
 internal/
   auth/                 JWT generation, token cache, OAuth flow
   scanner/              Concurrent artist→album pipeline, date filtering
-  playlist/             Find/create playlist, dedup tracks, add to playlist
+  playlist/             Find/create playlist, dedup tracks, add to playlist, lazy backfill
+  source/               Source interface + aggregator with name resolution + collaboration filter
 pkg/
   api/                  Apple Music API client (go-apple-music wrapper)
   config/               Viper/TOML config loading
-  db/                   SQLite store (artists, scan state, auth tokens)
+  db/                   SQLite store (artists, scan state, auth tokens, sources, releases)
 ```
 
 ## Performance
