@@ -253,6 +253,81 @@ func (c *Client) GetLibraryPlaylistCatalogTracks(ctx context.Context, playlistID
 	return nil, nil
 }
 
+// LibraryAlbumsResult is the paginated result of GetAllLibraryAlbums.
+// Stub — fully implemented in Task 4.3.
+type LibraryAlbumsResult struct {
+	Albums []LibraryAlbum
+}
+
+// LibraryAlbum is a single album from the user's library with its primary artist.
+// Stub — fully implemented in Task 4.3.
+type LibraryAlbum struct {
+	ID         string
+	ArtistID   string
+	ArtistName string
+	Name       string
+}
+
+// LibrarySongsResult is the paginated result of GetAllLibrarySongs.
+// Stub — fully implemented in Task 4.3.
+type LibrarySongsResult struct {
+	Songs []LibrarySong
+}
+
+// LibrarySong is a single song from the user's library with album and artist metadata.
+// Stub — fully implemented in Task 4.3.
+type LibrarySong struct {
+	ID         string
+	AlbumID    string
+	AlbumName  string
+	ArtistName string
+}
+
+// PlaylistSummary is a minimal playlist record used to list and locate
+// the user's library playlists (including "Liked Songs"). Stub — fully
+// implemented in Task 4.3.
+type PlaylistSummary struct {
+	ID   string
+	Name string
+}
+
+// ArtistSearchResult is the result of SearchArtists, narrowed to catalog
+// artist entries. Stub — fully implemented in Task 4.3.
+type ArtistSearchResult struct {
+	Artists []ArtistSearchEntry
+}
+
+// ArtistSearchEntry is a single artist hit from a catalog search.
+// Stub — fully implemented in Task 4.3.
+type ArtistSearchEntry struct {
+	ID   string
+	Name string
+}
+
+// GetAllLibraryAlbums pages through the user's library albums. Stub —
+// fully implemented in Task 4.3.
+func (c *Client) GetAllLibraryAlbums(ctx context.Context, limit int, onProgress func(page, total int)) (*LibraryAlbumsResult, error) {
+	return nil, nil
+}
+
+// GetAllLibrarySongs pages through the user's library songs. Stub —
+// fully implemented in Task 4.3.
+func (c *Client) GetAllLibrarySongs(ctx context.Context, limit int, onProgress func(page, total int)) (*LibrarySongsResult, error) {
+	return nil, nil
+}
+
+// GetAllLibraryPlaylists returns every playlist in the user's library.
+// Stub — fully implemented in Task 4.3.
+func (c *Client) GetAllLibraryPlaylists(ctx context.Context) ([]PlaylistSummary, error) {
+	return nil, nil
+}
+
+// SearchArtists queries the catalog for artists matching name on the given
+// storefront. Stub — fully implemented in Task 4.3.
+func (c *Client) SearchArtists(ctx context.Context, storefront, name string) (*ArtistSearchResult, error) {
+	return nil, nil
+}
+
 func (c *Client) GetAllLibraryArtists(ctx context.Context, limit int, onProgress ProgressCallback) (*LibraryArtists, error) {
 	var all []LibraryArtist
 	offset := 0
