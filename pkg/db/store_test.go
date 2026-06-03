@@ -741,3 +741,42 @@ func TestConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+func TestArtistSources_UpsertList(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	src := ArtistSource{
+		CatalogID:  "123",
+		SourceType: "library_artists",
+		SourceID:   "",
+		AddedAt:    time.Now().Format(time.RFC3339),
+	}
+	if err := store.UpsertArtistSource(src); err != nil {
+		t.Fatalf("UpsertArtistSource failed: %v", err)
+	}
+
+	list, err := store.ListArtistSources()
+	if err != nil {
+		t.Fatalf("ListArtistSources failed: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(list))
+	}
+	if list[0].CatalogID != "123" || list[0].SourceType != "library_artists" {
+		t.Errorf("unexpected source: %+v", list[0])
+	}
+
+	src.AddedAt = time.Now().Add(time.Hour).Format(time.RFC3339)
+	if err := store.UpsertArtistSource(src); err != nil {
+		t.Fatalf("UpsertArtistSource (update) failed: %v", err)
+	}
+	list, _ = store.ListArtistSources()
+	if len(list) != 1 {
+		t.Errorf("expected still 1 source after update, got %d", len(list))
+	}
+}

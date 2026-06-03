@@ -321,6 +321,32 @@ func (s *Store) ListArtists() ([]Artist, error) {
 	return artists, rows.Err()
 }
 
+func (s *Store) UpsertArtistSource(src ArtistSource) error {
+	_, err := s.db.Exec(`INSERT INTO artist_sources (catalog_id, source_type, source_id, added_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (catalog_id, source_type, source_id) DO UPDATE SET added_at = excluded.added_at`,
+		src.CatalogID, src.SourceType, src.SourceID, src.AddedAt)
+	return err
+}
+
+func (s *Store) ListArtistSources() ([]ArtistSource, error) {
+	rows, err := s.db.Query("SELECT catalog_id, source_type, source_id, added_at FROM artist_sources")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sources []ArtistSource
+	for rows.Next() {
+		var src ArtistSource
+		if err := rows.Scan(&src.CatalogID, &src.SourceType, &src.SourceID, &src.AddedAt); err != nil {
+			return nil, err
+		}
+		sources = append(sources, src)
+	}
+	return sources, rows.Err()
+}
+
 func (s *Store) CountArtists() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM artists").Scan(&count)
