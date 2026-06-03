@@ -201,3 +201,81 @@ func TestAddReleases_UpdatesReleasesTable(t *testing.T) {
 		t.Error("expected non-empty added_at")
 	}
 }
+
+func newTestManagerWithBackfillMock(t *testing.T, cfg *config.Config, store *db.Store, tracks []BackfillTrack) *Manager {
+	t.Helper()
+	m := New(cfg, nil, store)
+	saved := tracks
+	backfillFetchTracksFunc = func(ctx context.Context, playlistID string) ([]BackfillTrack, error) {
+		return saved, nil
+	}
+	t.Cleanup(func() { backfillFetchTracksFunc = nil })
+	return m
+}
+
+func TestBackfillFromPlaylist_InsertsAllAsAdded(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := db.Open(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	skipped, _ := store.SkippedReleaseIDs()
+	if len(skipped) != 0 {
+		t.Fatalf("expected empty releases table, got %d entries", len(skipped))
+	}
+
+	cfg := &config.Config{Playlist: config.PlaylistConfig{Name: "Test", AutoCreate: true}}
+	m := newTestManagerWithBackfillMock(t, cfg, store, []BackfillTrack{
+		{TrackID: "t1", AlbumID: "album-x", AlbumName: "Album X", ArtistName: "Artist X", ReleaseDate: "2026-01-01"},
+		{TrackID: "t2", AlbumID: "album-y", AlbumName: "Album Y", ArtistName: "Artist Y", ReleaseDate: "2026-02-01"},
+	})
+
+	n, err := m.BackfillFromPlaylist(context.Background(), "playlist-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 backfilled, got %d", n)
+	}
+
+	relX, _ := store.GetRelease("album-x")
+	if relX == nil || relX.State != "added" {
+		t.Errorf("expected album-x in added state, got %+v", relX)
+	}
+	relY, _ := store.GetRelease("album-y")
+	if relY == nil || relY.State != "added" {
+		t.Errorf("expected album-y in added state, got %+v", relY)
+	}
+}
+
+func TestBackfillFromPlaylist_SkipsIfNotEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := db.Open(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.UpsertRelease(db.Release{AlbumID: "existing", State: "seen", FirstSeenAt: "2026-01-01"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Playlist: config.PlaylistConfig{Name: "Test"}}
+	m := newTestManagerWithBackfillMock(t, cfg, store, []BackfillTrack{
+		{TrackID: "t1", AlbumID: "should-skip", AlbumName: "X"},
+	})
+
+	n, err := m.BackfillFromPlaylist(context.Background(), "playlist-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 (table non-empty), got %d", n)
+	}
+	rel, _ := store.GetRelease("should-skip")
+	if rel != nil {
+		t.Error("backfill should not have run when table was non-empty")
+	}
+}

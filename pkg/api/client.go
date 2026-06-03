@@ -237,6 +237,22 @@ func (c *Client) GetLibraryArtistAlbums(ctx context.Context, libraryArtistID str
 	}
 }
 
+// PlaylistTrackResult is a single track returned by GetLibraryPlaylistCatalogTracks
+// with album and artist metadata attached. Stub — fully implemented in Task 4.3.
+type PlaylistTrackResult struct {
+	TrackID     string
+	AlbumID     string
+	AlbumName   string
+	ArtistName  string
+	ReleaseDate string
+}
+
+// GetLibraryPlaylistCatalogTracks fetches the catalog tracks of a library playlist
+// with album metadata for backfill. Stub — fully implemented in Task 4.3.
+func (c *Client) GetLibraryPlaylistCatalogTracks(ctx context.Context, playlistID string, limit int) ([]PlaylistTrackResult, error) {
+	return nil, nil
+}
+
 func (c *Client) GetAllLibraryArtists(ctx context.Context, limit int, onProgress ProgressCallback) (*LibraryArtists, error) {
 	var all []LibraryArtist
 	offset := 0
