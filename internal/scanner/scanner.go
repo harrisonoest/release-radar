@@ -78,6 +78,14 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 	var errs []error
 	seen := make(map[string]bool)
 
+	var skipped map[string]bool
+	if s.store != nil {
+		skipped, err = s.store.SkippedReleaseIDs()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load skipped releases: %w", err)
+		}
+	}
+
 	total := int64(len(artists))
 	if s.verbose {
 		fmt.Printf("Scanning %d artists (concurrency: %d, storefront: %s, since: %s)…\n",
@@ -97,6 +105,18 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 				errs = append(errs, fmt.Errorf("%s: %w", a.Name, err))
 				mu.Unlock()
 				s.errors.Add(1)
+			}
+
+			if skipped != nil {
+				filtered := found[:0]
+				for _, r := range found {
+					if skipped[r.AlbumID] {
+						s.pruned.Add(1)
+						continue
+					}
+					filtered = append(filtered, r)
+				}
+				found = filtered
 			}
 
 			if len(found) > 0 {

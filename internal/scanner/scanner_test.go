@@ -1187,3 +1187,44 @@ func TestScanner_Scan_Parallel(t *testing.T) {
 		t.Errorf("releases = %d, want %d", len(releases), artistCount)
 	}
 }
+
+func TestScan_SkipsKnownReleases(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := db.Open(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	for _, r := range []db.Release{
+		{AlbumID: "added-1", CatalogArtistID: "a1", Name: "n", State: "added", FirstSeenAt: now, ReleaseDate: "2026-01-01"},
+		{AlbumID: "ignored-1", CatalogArtistID: "a1", Name: "n", State: "ignored", FirstSeenAt: now, ReleaseDate: "2026-01-01"},
+	} {
+		if err := store.UpsertRelease(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1, MaxAlbumsPerArtist: 10}}
+	client := newMockAPIClient()
+	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, limit int) (*api.ArtistAlbumsResult, error) {
+		return &api.ArtistAlbumsResult{
+			Albums: []applemusic.Album{
+				{Id: "added-1", Attributes: applemusic.AlbumAttributes{Name: "Added", ReleaseDate: "2026-06-01", TrackCount: 5}},
+				{Id: "ignored-1", Attributes: applemusic.AlbumAttributes{Name: "Ignored", ReleaseDate: "2026-06-01", TrackCount: 5}},
+				{Id: "fresh-1", Attributes: applemusic.AlbumAttributes{Name: "Fresh", ReleaseDate: "2026-06-01", TrackCount: 5}},
+			},
+		}, nil
+	}
+	s := New(cfg, client, store, false)
+
+	releases, err := s.Scan(context.Background(), []db.Artist{{CatalogID: "a1", Name: "A1"}}, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 || releases[0].AlbumID != "fresh-1" {
+		t.Errorf("expected only 'fresh-1', got %+v", releases)
+	}
+}
