@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/harrisonoest/release-radar/internal/scanner"
 	"github.com/harrisonoest/release-radar/pkg/api"
@@ -105,6 +106,22 @@ func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases [
 		if err != nil {
 			return added, fmt.Errorf("failed to add tracks to playlist: %w", err)
 		}
+
+		if m.store != nil {
+			now := time.Now().UTC().Format(time.RFC3339)
+			_ = m.store.UpsertRelease(db.Release{
+				AlbumID:         rel.AlbumID,
+				CatalogArtistID: rel.ArtistID,
+				ArtistName:      rel.ArtistName,
+				Name:            rel.AlbumName,
+				ReleaseDate:     rel.ReleaseDate,
+				TrackCount:      rel.TrackCount,
+				State:           "added",
+				FirstSeenAt:     now,
+				AddedAt:         now,
+			})
+		}
+
 		added++
 
 		fmt.Printf("  + %s — %s (%d tracks)\n", rel.ArtistName, rel.AlbumName, len(newTracks))
