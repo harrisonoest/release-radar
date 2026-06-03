@@ -64,6 +64,30 @@ CREATE TABLE IF NOT EXISTS ignored_artists (
 	name TEXT NOT NULL,
 	ignored_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS artist_sources (
+	catalog_id  TEXT NOT NULL,
+	source_type TEXT NOT NULL,
+	source_id   TEXT NOT NULL DEFAULT '',
+	added_at    TEXT NOT NULL,
+	PRIMARY KEY (catalog_id, source_type, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_artist_sources_catalog_id ON artist_sources(catalog_id);
+
+CREATE TABLE IF NOT EXISTS releases (
+	album_id            TEXT PRIMARY KEY,
+	catalog_artist_id   TEXT NOT NULL,
+	artist_name         TEXT NOT NULL,
+	name                TEXT NOT NULL,
+	release_date        TEXT NOT NULL,
+	track_count         INTEGER NOT NULL DEFAULT 0,
+	state               TEXT NOT NULL,
+	first_seen_at       TEXT NOT NULL,
+	added_at            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_releases_state ON releases(state);
+CREATE INDEX IF NOT EXISTS idx_releases_artist ON releases(catalog_artist_id);
+CREATE INDEX IF NOT EXISTS idx_releases_release_date ON releases(release_date);
 `
 
 func Open(cacheDir string) (*Store, error) {
