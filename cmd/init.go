@@ -3,23 +3,26 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/harrisonoest/release-radar/internal/auth"
+	"github.com/harrisonoest/release-radar/internal/source"
 	"github.com/harrisonoest/release-radar/pkg/api"
 	"github.com/harrisonoest/release-radar/pkg/config"
 	"github.com/harrisonoest/release-radar/pkg/db"
 	"github.com/spf13/cobra"
-	"github.com/vbauerster/mpb/v8"
-	"github.com/vbauerster/mpb/v8/decor"
 )
+
+var initAll bool
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Pull artists from your Apple Music library",
 	Long: `Fetches all artists from your Apple Music library and saves them
-to a local cache. Sets the baseline timestamp for future release scans.`,
+to a local cache. Sets the baseline timestamp for future release scans.
+
+Use --all to additionally pull artists from library albums, library songs,
+and liked songs.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
@@ -45,139 +48,51 @@ to a local cache. Sets the baseline timestamp for future release scans.`,
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 		defer cancel()
 
-p := mpb.New(mpb.WithWidth(60))
-		bar := p.AddBar(0,
-			mpb.BarFillerClearOnComplete(),
-			mpb.PrependDecorators(decor.Name("Fetching artists", decor.WCSyncSpace)),
-			mpb.AppendDecorators(decor.CountersNoUnit("pages: %d / %d")),
-		)
-
-		var libraryArtists *api.LibraryArtists
-		var firstTotalSet bool
-		var totalPages int
-
-		libraryArtists, err = client.GetAllLibraryArtists(ctx, 25, func(page, total int) {
-			if total > 0 && !firstTotalSet {
-				firstTotalSet = true
-				totalPages = total
-				bar.SetTotal(int64(total), false)
-				bar.EnableTriggerComplete()
-			}
-			bar.SetCurrent(int64(page))
-		})
-		if totalPages > 0 {
-			bar.SetCurrent(int64(totalPages))
-		} else {
-			bar.EnableTriggerComplete()
-		}
-		p.Wait()
-
+		storefront, err := client.GetStorefront(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to fetch artists: %w", err)
+			return fmt.Errorf("failed to get storefront: %w", err)
 		}
 
-		if len(libraryArtists.Data) == 0 {
-			fmt.Println("No artists found in your library.")
-			return nil
-		}
-
-		if verbose {
-			fmt.Printf("Fetched %d library artist entries.\n", len(libraryArtists.Data))
-		}
-
-		now := time.Now().UTC().Format(time.RFC3339)
-
-		type libEntry struct {
-			libraryID string
-			catalogID string
-			name      string
-			href      string
-		}
-		entries := make([]libEntry, 0, len(libraryArtists.Data))
-		standaloneCatalogs := make(map[string]bool)
-
-		for _, a := range libraryArtists.Data {
-			catalogID := ""
-			if len(a.Relationships.Catalog.Data) > 0 {
-				catalogID = a.Relationships.Catalog.Data[0].ID
-			}
-			if catalogID == "" {
-				continue
-			}
-
-			entries = append(entries, libEntry{
-				libraryID: a.ID,
-				catalogID: catalogID,
-				name:      a.Attributes.Name,
-				href:      a.Href,
-			})
-
-			if !isCollaboration(a.Attributes.Name) {
-				standaloneCatalogs[catalogID] = true
-			}
-		}
-
-		artists := make([]db.Artist, 0, len(standaloneCatalogs))
-		seenCatalog := make(map[string]int)
-
-		for _, e := range entries {
-			if e.catalogID == "" {
-				continue
-			}
-			if !standaloneCatalogs[e.catalogID] {
-				continue
-			}
-
-			artist := db.Artist{
-				CatalogID: e.catalogID,
-				LibraryID: e.libraryID,
-				Name:      e.name,
-				Href:      e.href,
-				LastSeen:  now,
-			}
-
-			if idx, exists := seenCatalog[e.catalogID]; exists {
-				existing := &artists[idx]
-				if len(e.name) < len(existing.Name) {
-					*existing = artist
+		agg := &source.Aggregator{
+			Store:      store,
+			Fetcher:    client,
+			Storefront: storefront,
+			Logger: func(format string, args ...interface{}) {
+				if verbose {
+					fmt.Printf("  "+format+"\n", args...)
 				}
-				continue
-			}
-			seenCatalog[e.catalogID] = len(artists)
-			artists = append(artists, artist)
+			},
 		}
 
-		if verbose {
-			skipped := len(libraryArtists.Data) - len(entries)
-			collabDropped := len(entries) - len(artists)
-			fmt.Printf("Dropped %d without catalog, %d collaborator-only, cached %d artists.\n",
-				skipped, collabDropped, len(artists))
+		sources := []source.Source{
+			&source.LibraryArtists{},
+		}
+		if initAll {
+			sources = append(sources,
+				&source.LibraryAlbums{},
+				&source.LibrarySongs{},
+				&source.LikedSongs{},
+			)
 		}
 
-		if err := store.ReplaceArtists(artists); err != nil {
-			return fmt.Errorf("failed to save artists: %w", err)
+		if err := agg.Aggregate(ctx, sources); err != nil {
+			return fmt.Errorf("aggregation failed: %w", err)
 		}
 
 		if err := store.MarkScanned(0, 0); err != nil {
 			return fmt.Errorf("failed to save scan state: %w", err)
 		}
 
-		fmt.Printf("Cached %d artists. Ready to scan!\n", len(artists))
+		count, err := store.CountArtists()
+		if err != nil {
+			return fmt.Errorf("failed to count artists: %w", err)
+		}
+
+		fmt.Printf("Cached %d artists. Ready to scan!\n", count)
 		return nil
 	},
 }
 
-var collabSeps = []string{" & ", ", ", " X "}
-
-func isCollaboration(name string) bool {
-	lower := strings.ToLower(name)
-	if strings.Contains(lower, " feat. ") || strings.Contains(lower, " ft. ") {
-		return true
-	}
-	for _, sep := range collabSeps {
-		if strings.Contains(name, sep) {
-			return true
-		}
-	}
-	return false
+func init() {
+	initCmd.Flags().BoolVar(&initAll, "all", false, "pull artists from all library sources (albums, songs, liked)")
 }
