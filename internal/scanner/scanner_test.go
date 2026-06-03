@@ -41,7 +41,7 @@ func TestNew(t *testing.T) {
 	}
 	client := newMockAPIClient()
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	if s.cfg != cfg {
 		t.Errorf("config = %v, want %v", s.cfg, cfg)
@@ -65,7 +65,7 @@ func TestNew_DefaultConcurrency(t *testing.T) {
 	}
 	client := newMockAPIClient()
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	if s.concurrency != 10 {
 		t.Errorf("concurrency = %d, want 10 (default)", s.concurrency)
@@ -75,7 +75,7 @@ func TestNew_DefaultConcurrency(t *testing.T) {
 func TestSetProgressCallback(t *testing.T) {
 	cfg := &config.Config{}
 	client := newMockAPIClient()
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	var called int64
 	s.SetProgressCallback(func(checked, found, errors int64) {
@@ -302,7 +302,7 @@ func TestScanner_Scan(t *testing.T) {
 				},
 			}
 
-			s := New(cfg, client, false)
+			s := New(cfg, client, nil, false)
 			releases, err := s.Scan(context.Background(), tt.artists, since)
 
 			if (err != nil) != tt.wantErr {
@@ -352,7 +352,7 @@ func TestScanner_Scan_Deduplication(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artists := []db.Artist{
 		{CatalogID: "1", Name: "Artist1"},
@@ -412,7 +412,7 @@ func TestScanner_Scan_Concurrency(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artists := make([]db.Artist, 10)
 	for i := 0; i < 10; i++ {
@@ -471,7 +471,7 @@ func TestScanner_Scan_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artists := []db.Artist{{CatalogID: "1", Name: "Artist"}}
 
@@ -529,7 +529,7 @@ func TestScanner_Scan_ProgressCallback(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	var progressMu sync.Mutex
 	s.SetProgressCallback(func(checked, found, errors int64) {
@@ -602,7 +602,7 @@ func TestScanner_Scan_ErrorHandling(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, true)
+	s := New(cfg, client, nil, true)
 
 	artists := []db.Artist{
 		{CatalogID: "1", Name: "WorkingArtist"},
@@ -703,7 +703,7 @@ func TestScanner_checkArtist(t *testing.T) {
 				},
 			}
 
-			s := New(cfg, client, false)
+			s := New(cfg, client, nil, false)
 			releases, err := s.checkArtist(context.Background(), tt.artist, since, 10)
 
 			if (err != nil) != tt.wantErr {
@@ -757,7 +757,7 @@ func TestScanner_checkArtist_RateLimitRetry(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
@@ -795,7 +795,7 @@ func TestScanner_checkArtist_RateLimitExhausted(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
@@ -834,7 +834,7 @@ func TestScanner_checkArtist_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
@@ -882,7 +882,7 @@ func TestScanner_checkArtist_ParseError(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
@@ -928,7 +928,7 @@ func TestScanner_checkArtist_AlbumLimit(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artist := db.Artist{CatalogID: "123", Name: "Artist"}
 
@@ -961,7 +961,7 @@ func TestScanner_Scan_EmptyArtists(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	releases, err := s.Scan(context.Background(), []db.Artist{}, since)
 
@@ -992,7 +992,7 @@ func TestScanner_Scan_AllFailures(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, true)
+	s := New(cfg, client, nil, true)
 
 	artists := []db.Artist{
 		{CatalogID: "1", Name: "Artist1"},
@@ -1042,7 +1042,7 @@ func TestScanner_Scan_PartialSuccess(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, true)
+	s := New(cfg, client, nil, true)
 
 	artists := []db.Artist{
 		{CatalogID: "1", Name: "WorkingArtist"},
@@ -1122,7 +1122,7 @@ func TestScanner_Scan_DateFormats(t *testing.T) {
 				},
 			}
 
-			s := New(cfg, client, false)
+			s := New(cfg, client, nil, false)
 			releases, err := s.Scan(context.Background(), []db.Artist{{CatalogID: "1", Name: "Artist"}}, since)
 
 			if err != nil {
@@ -1170,7 +1170,7 @@ func TestScanner_Scan_Parallel(t *testing.T) {
 		},
 	}
 
-	s := New(cfg, client, false)
+	s := New(cfg, client, nil, false)
 
 	artistCount := 20
 	artists := make([]db.Artist, artistCount)

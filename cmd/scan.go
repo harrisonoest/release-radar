@@ -129,7 +129,7 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 				}
 			}
 
-			scan := scanner.New(cfg, client, verbose)
+			scan := scanner.New(cfg, client, store, verbose)
 
 			var foundCount atomic.Int64
 			var errCount atomic.Int64

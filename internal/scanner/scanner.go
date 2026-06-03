@@ -30,15 +30,18 @@ type APIClient interface {
 type Scanner struct {
 	cfg         *config.Config
 	client      api.ClientInterface
+	store       *db.Store
 	concurrency int
 	storefront  string
 	verbose     bool
 	checked     atomic.Int64
 	errors      atomic.Int64
+	permFails   atomic.Int64
+	pruned      atomic.Int64
 	onProgress  func(checked, found, errors int64)
 }
 
-func New(cfg *config.Config, client api.ClientInterface, verbose bool) *Scanner {
+func New(cfg *config.Config, client api.ClientInterface, store *db.Store, verbose bool) *Scanner {
 	concurrency := cfg.Scan.Concurrency
 	if concurrency <= 0 {
 		concurrency = 10
@@ -46,6 +49,7 @@ func New(cfg *config.Config, client api.ClientInterface, verbose bool) *Scanner 
 	return &Scanner{
 		cfg:         cfg,
 		client:      client,
+		store:       store,
 		concurrency: concurrency,
 		verbose:     verbose,
 	}
