@@ -780,3 +780,97 @@ func TestArtistSources_UpsertList(t *testing.T) {
 		t.Errorf("expected still 1 source after update, got %d", len(list))
 	}
 }
+
+func TestReleases_UpsertStateTransitions(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	rel := Release{
+		AlbumID:         "album-1",
+		CatalogArtistID: "123",
+		ArtistName:      "Test Artist",
+		Name:            "Test Album",
+		ReleaseDate:     "2026-06-01",
+		TrackCount:      10,
+		State:           "seen",
+		FirstSeenAt:     now,
+	}
+	if err := store.UpsertRelease(rel); err != nil {
+		t.Fatalf("UpsertRelease failed: %v", err)
+	}
+
+	fetched, err := store.GetRelease("album-1")
+	if err != nil {
+		t.Fatalf("GetRelease failed: %v", err)
+	}
+	if fetched == nil {
+		t.Fatal("expected release, got nil")
+	}
+	if fetched.State != "seen" {
+		t.Errorf("expected state 'seen', got %q", fetched.State)
+	}
+
+	// Transition to added
+	rel.State = "added"
+	rel.AddedAt = now
+	if err := store.UpsertRelease(rel); err != nil {
+		t.Fatalf("UpsertRelease (added) failed: %v", err)
+	}
+	fetched, _ = store.GetRelease("album-1")
+	if fetched.State != "added" || fetched.AddedAt != now {
+		t.Errorf("expected state=added, added_at=%s, got state=%s, added_at=%s", now, fetched.State, fetched.AddedAt)
+	}
+
+	// GetRelease on non-existent returns nil, no error
+	missing, err := store.GetRelease("does-not-exist")
+	if err != nil {
+		t.Errorf("expected no error for missing release, got %v", err)
+	}
+	if missing != nil {
+		t.Errorf("expected nil for missing release, got %+v", missing)
+	}
+}
+
+func TestReleases_SkippedIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	for _, state := range []string{"seen", "added", "ignored"} {
+		rel := Release{
+			AlbumID:         "album-" + state,
+			CatalogArtistID: "123",
+			ArtistName:      "Test",
+			Name:            "Test " + state,
+			ReleaseDate:     "2026-06-01",
+			State:           state,
+			FirstSeenAt:     now,
+		}
+		if err := store.UpsertRelease(rel); err != nil {
+			t.Fatalf("UpsertRelease %s failed: %v", state, err)
+		}
+	}
+
+	skipped, err := store.SkippedReleaseIDs()
+	if err != nil {
+		t.Fatalf("SkippedReleaseIDs failed: %v", err)
+	}
+	if _, ok := skipped["album-seen"]; ok {
+		t.Error("'seen' releases should NOT be in skip set")
+	}
+	if _, ok := skipped["album-added"]; !ok {
+		t.Error("'added' releases should be in skip set")
+	}
+	if _, ok := skipped["album-ignored"]; !ok {
+		t.Error("'ignored' releases should be in skip set")
+	}
+}

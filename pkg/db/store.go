@@ -347,6 +347,56 @@ func (s *Store) ListArtistSources() ([]ArtistSource, error) {
 	return sources, rows.Err()
 }
 
+func (s *Store) UpsertRelease(r Release) error {
+	_, err := s.db.Exec(`INSERT INTO releases (album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (album_id) DO UPDATE SET
+            state = excluded.state,
+            added_at = COALESCE(NULLIF(excluded.added_at, ''), releases.added_at),
+            track_count = excluded.track_count,
+            name = excluded.name,
+            artist_name = excluded.artist_name,
+            release_date = excluded.release_date`,
+		r.AlbumID, r.CatalogArtistID, r.ArtistName, r.Name, r.ReleaseDate,
+		r.TrackCount, r.State, r.FirstSeenAt, r.AddedAt)
+	return err
+}
+
+func (s *Store) GetRelease(albumID string) (*Release, error) {
+	row := s.db.QueryRow(`SELECT album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at
+        FROM releases WHERE album_id = ?`, albumID)
+	var r Release
+	err := row.Scan(&r.AlbumID, &r.CatalogArtistID, &r.ArtistName, &r.Name, &r.ReleaseDate,
+		&r.TrackCount, &r.State, &r.FirstSeenAt, &r.AddedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// SkippedReleaseIDs returns the set of album_ids that should be filtered out by the scanner
+// (state IN ('added', 'ignored')).
+func (s *Store) SkippedReleaseIDs() (map[string]bool, error) {
+	rows, err := s.db.Query("SELECT album_id FROM releases WHERE state IN ('added', 'ignored')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) CountArtists() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM artists").Scan(&count)
