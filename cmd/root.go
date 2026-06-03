@@ -34,4 +34,5 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(ignoreCmd)
 	rootCmd.AddCommand(sourcesCmd)
+	rootCmd.AddCommand(releasesCmd)
 }
