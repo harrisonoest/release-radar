@@ -345,8 +345,7 @@ func TestScanner_Scan_Deduplication(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Scan: config.ScanConfig{
-		},
+		Scan: config.ScanConfig{},
 	}
 
 	s := New(cfg, client, nil, false)
@@ -460,7 +459,7 @@ func TestScanner_Scan_ContextCancellation(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        1,
+			Concurrency: 1,
 		},
 	}
 
@@ -517,7 +516,7 @@ func TestScanner_Scan_ProgressCallback(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        2,
+			Concurrency: 2,
 		},
 	}
 
@@ -589,7 +588,7 @@ func TestScanner_Scan_ErrorHandling(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        2,
+			Concurrency: 2,
 		},
 	}
 
@@ -689,8 +688,7 @@ func TestScanner_checkArtist(t *testing.T) {
 			}
 
 			cfg := &config.Config{
-				Scan: config.ScanConfig{
-				},
+				Scan: config.ScanConfig{},
 			}
 
 			s := New(cfg, client, nil, false)
@@ -742,8 +740,7 @@ func TestScanner_checkArtist_RateLimitRetry(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Scan: config.ScanConfig{
-		},
+		Scan: config.ScanConfig{},
 	}
 
 	s := New(cfg, client, nil, false)
@@ -779,8 +776,7 @@ func TestScanner_checkArtist_RateLimitExhausted(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Scan: config.ScanConfig{
-		},
+		Scan: config.ScanConfig{},
 	}
 
 	s := New(cfg, client, nil, false)
@@ -817,8 +813,7 @@ func TestScanner_checkArtist_ContextCancellation(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Scan: config.ScanConfig{
-		},
+		Scan: config.ScanConfig{},
 	}
 
 	s := New(cfg, client, nil, false)
@@ -864,8 +859,7 @@ func TestScanner_checkArtist_ParseError(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Scan: config.ScanConfig{
-		},
+		Scan: config.ScanConfig{},
 	}
 
 	s := New(cfg, client, nil, false)
@@ -896,7 +890,7 @@ func TestScanner_Scan_EmptyArtists(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        2,
+			Concurrency: 2,
 		},
 	}
 
@@ -926,7 +920,7 @@ func TestScanner_Scan_AllFailures(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        2,
+			Concurrency: 2,
 		},
 	}
 
@@ -975,7 +969,7 @@ func TestScanner_Scan_PartialSuccess(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        2,
+			Concurrency: 2,
 		},
 	}
 
@@ -1054,8 +1048,7 @@ func TestScanner_Scan_DateFormats(t *testing.T) {
 			}
 
 			cfg := &config.Config{
-				Scan: config.ScanConfig{
-				},
+				Scan: config.ScanConfig{},
 			}
 
 			s := New(cfg, client, nil, false)
@@ -1101,7 +1094,7 @@ func TestScanner_Scan_Parallel(t *testing.T) {
 
 	cfg := &config.Config{
 		Scan: config.ScanConfig{
-			Concurrency:        10,
+			Concurrency: 10,
 		},
 	}
 
