@@ -1131,10 +1131,12 @@ func TestScan_SkipsKnownReleases(t *testing.T) {
 	}
 	defer store.Close()
 
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now()
+	recentDate := now.AddDate(0, 0, -7).Format("2006-01-02")
+	nowStr := now.Format(time.RFC3339)
 	for _, r := range []db.Release{
-		{AlbumID: "added-1", CatalogArtistID: "a1", Name: "n", State: "added", FirstSeenAt: now, ReleaseDate: "2026-01-01"},
-		{AlbumID: "ignored-1", CatalogArtistID: "a1", Name: "n", State: "ignored", FirstSeenAt: now, ReleaseDate: "2026-01-01"},
+		{AlbumID: "added-1", CatalogArtistID: "a1", Name: "n", State: "added", FirstSeenAt: nowStr, ReleaseDate: recentDate},
+		{AlbumID: "ignored-1", CatalogArtistID: "a1", Name: "n", State: "ignored", FirstSeenAt: nowStr, ReleaseDate: recentDate},
 	} {
 		if err := store.UpsertRelease(r); err != nil {
 			t.Fatal(err)
@@ -1147,9 +1149,9 @@ func TestScan_SkipsKnownReleases(t *testing.T) {
 	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
 		return &api.ArtistAlbumsResult{
 			Albums: []applemusic.Album{
-				{Id: "added-1", Attributes: applemusic.AlbumAttributes{Name: "Added", ReleaseDate: "2026-06-01", TrackCount: 5}},
-				{Id: "ignored-1", Attributes: applemusic.AlbumAttributes{Name: "Ignored", ReleaseDate: "2026-06-01", TrackCount: 5}},
-				{Id: "fresh-1", Attributes: applemusic.AlbumAttributes{Name: "Fresh", ReleaseDate: "2026-06-01", TrackCount: 5}},
+				{Id: "added-1", Attributes: applemusic.AlbumAttributes{Name: "Added", ReleaseDate: recentDate, TrackCount: 5}},
+				{Id: "ignored-1", Attributes: applemusic.AlbumAttributes{Name: "Ignored", ReleaseDate: recentDate, TrackCount: 5}},
+				{Id: "fresh-1", Attributes: applemusic.AlbumAttributes{Name: "Fresh", ReleaseDate: recentDate, TrackCount: 5}},
 			},
 		}, nil
 	}
