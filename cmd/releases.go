@@ -142,7 +142,7 @@ func updateState(albumID, state, label string) error {
 }
 
 func init() {
-	releasesListCmd.Flags().String("state", "", "filter by state: seen, added, ignored")
+	releasesListCmd.Flags().String("state", "", "filter by state: seen, added, ignored, upcoming")
 	releasesListCmd.Flags().Int("limit", 50, "max releases to show (0 for no limit)")
 
 	releasesCmd.AddCommand(releasesListCmd)

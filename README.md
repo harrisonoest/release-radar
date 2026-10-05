@@ -10,9 +10,9 @@ release-radar init       # Pull your library artists
 release-radar scan       # Check for new releases, add to playlist
 ```
 
-`init` pulls artists from your library (and optionally other sources via `--all` or `--from-playlist`), resolves names to catalog IDs, and deduplicates — collaborative entries like "Joris Voorn & Goodboys" are collapsed into the standalone artist. Only artists with at least one standalone entry are tracked.
+`init` pulls artists from your library (and optionally other sources via `--all` or `--from-playlist`), resolves names to catalog IDs, and deduplicates. Real bands with "&" or "," in their name (e.g. "Earth, Wind & Fire") are kept — the collaboration filter (e.g. "Joris Voorn & Goodboys") only applies to names that had to be resolved via catalog search, and only when the search hit's name actually matches. If any source fails to fetch, `init` aborts without touching your tracked set rather than silently shrinking it. Note: bare `init` covers **library artists only**; use `--all` for full coverage of albums, songs, and liked songs.
 
-`scan` queries each artist's catalog albums, skips releases already in `added` or `ignored` state, compares release dates against your last scan timestamp, and adds new releases to your "Release Radar" playlist. On first run, it lazy-backfills existing playlist tracks into the releases table.
+`scan` queries each artist's full catalog album listing (all pages — no early cutoff), skips releases already in `added` or `ignored` state, compares release dates against your last scan timestamp, and adds new releases to your "Release Radar" playlist. Future-dated albums (announced pre-releases and label placeholders) are recorded in the `upcoming` state instead — shown by `releases list --state upcoming`, never added to the playlist until the date arrives. If any artist's query fails, the scan timestamp does **not** advance, so those artists are re-checked next run; a warning lists them. On first run, `scan` lazy-backfills existing playlist tracks into the releases table.
 
 `sources` manages where your artists come from — library, albums, songs, liked songs, and external playlists. `releases` lets you view and manage the state of every tracked release.
 
@@ -127,7 +127,8 @@ release-radar scan -v           # Verbose output
 
 # Manage releases
 release-radar releases list               # List releases (default: added + ignored)
-release-radar releases list --state seen  # List new/unprocessed releases
+release-radar releases list --state seen      # List new/unprocessed releases
+release-radar releases list --state upcoming  # Announced-but-unreleased (incl. placeholder dates)
 release-radar releases show <album_id>    # Show full details for a release
 release-radar releases ignore <album_id>  # Ignore a release
 release-radar releases unignore <album_id>
@@ -147,6 +148,14 @@ Run `scan` on a cron job for weekly updates:
 
 ```
 0 9 * * 1 /home/you/.local/bin/release-radar scan
+```
+
+### Backfilling missed releases
+
+Older versions had pagination and watermark bugs that could permanently skip releases. If you're upgrading, do one catch-up scan with an explicit lookback — the `releases` state machine prevents duplicates:
+
+```bash
+release-radar scan --since 2026-01-01
 ```
 
 ## Configuration reference
@@ -248,6 +257,8 @@ CREATE TABLE artist_sources (
 );
 
 -- Release state machine (per-album lifecycle)
+-- States: seen (new/unprocessed), added (in playlist), ignored (user-silenced),
+--          upcoming (future-dated: pre-release or placeholder)
 CREATE TABLE releases (
     album_id          TEXT PRIMARY KEY,
     catalog_artist_id TEXT NOT NULL,
