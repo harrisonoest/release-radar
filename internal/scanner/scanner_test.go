@@ -1116,6 +1116,67 @@ func TestScanner_Scan_Parallel(t *testing.T) {
 	}
 }
 
+func TestScan_ClassifiesUpcomingReleases(t *testing.T) {
+	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1}}
+	client := newMockAPIClient()
+	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
+	future := time.Now().AddDate(0, 0, 30).Format("2006-01-02")
+	past := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
+		return &api.ArtistAlbumsResult{
+			Albums: []applemusic.Album{
+				{Id: "future-1", Attributes: applemusic.AlbumAttributes{Name: "Future", ReleaseDate: future, TrackCount: 12}},
+				{Id: "past-1", Attributes: applemusic.AlbumAttributes{Name: "Past", ReleaseDate: past, TrackCount: 10}},
+			},
+		}, nil
+	}
+	s := New(cfg, client, nil, false)
+
+	releases, err := s.Scan(context.Background(), []db.Artist{{CatalogID: "a1", Name: "A1"}}, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]Release, len(releases))
+	for _, r := range releases {
+		byID[r.AlbumID] = r
+	}
+	if !byID["future-1"].Upcoming {
+		t.Errorf("future-1 should be classified upcoming, got %+v", byID["future-1"])
+	}
+	if byID["past-1"].Upcoming {
+		t.Errorf("past-1 should NOT be classified upcoming, got %+v", byID["past-1"])
+	}
+}
+
+func TestScan_FailedArtistsReported(t *testing.T) {
+	cfg := &config.Config{Scan: config.ScanConfig{Concurrency: 1}}
+	client := newMockAPIClient()
+	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
+	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
+		if artistID == "bad" {
+			return nil, fmt.Errorf("API returned status 500")
+		}
+		return &api.ArtistAlbumsResult{
+			Albums: []applemusic.Album{
+				{Id: "x-1", Attributes: applemusic.AlbumAttributes{Name: "X", ReleaseDate: time.Now().AddDate(0, 0, -5).Format("2006-01-02"), TrackCount: 3}},
+			},
+		}, nil
+	}
+	s := New(cfg, client, nil, false)
+
+	_, err := s.Scan(context.Background(), []db.Artist{
+		{CatalogID: "bad", Name: "BadArtist"},
+		{CatalogID: "good", Name: "GoodArtist"},
+	}, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := s.FailedArtists()
+	if len(failed) != 1 || failed[0] != "BadArtist" {
+		t.Errorf("expected FailedArtists = [BadArtist], got %v", failed)
+	}
+}
+
 func TestScan_SkipsKnownReleases(t *testing.T) {
 	tmpDir := t.TempDir()
 	store, err := db.Open(tmpDir)

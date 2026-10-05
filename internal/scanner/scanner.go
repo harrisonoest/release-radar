@@ -20,6 +20,10 @@ type Release struct {
 	AlbumName   string
 	ReleaseDate string
 	TrackCount  int
+	// Upcoming is true when the release date is in the future (announced but
+	// not yet out, including placeholder dates). Upcoming releases are
+	// recorded but not added to the playlist.
+	Upcoming bool
 }
 
 type APIClient interface {
@@ -39,6 +43,8 @@ type Scanner struct {
 	permFails   atomic.Int64
 	pruned      atomic.Int64
 	zeroAlbums  atomic.Int64
+	failedMu    sync.Mutex
+	failedNames []string
 	onProgress  func(checked, found, errors int64)
 }
 
@@ -70,6 +76,17 @@ func (s *Scanner) Pruned() int64 {
 
 func (s *Scanner) ZeroAlbumArtists() int64 {
 	return s.zeroAlbums.Load()
+}
+
+// FailedArtists returns the names of artists whose queries failed this scan.
+// Their releases in this window are unknown, so callers must not advance the
+// scan watermark past them.
+func (s *Scanner) FailedArtists() []string {
+	s.failedMu.Lock()
+	defer s.failedMu.Unlock()
+	out := make([]string, len(s.failedNames))
+	copy(out, s.failedNames)
+	return out
 }
 
 func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time) ([]Release, error) {
@@ -113,6 +130,9 @@ func (s *Scanner) Scan(ctx context.Context, artists []db.Artist, since time.Time
 				errs = append(errs, fmt.Errorf("%s: %w", a.Name, err))
 				mu.Unlock()
 				s.errors.Add(1)
+				s.failedMu.Lock()
+				s.failedNames = append(s.failedNames, a.Name)
+				s.failedMu.Unlock()
 			}
 
 			if skipped != nil {
@@ -215,6 +235,7 @@ func (s *Scanner) checkArtist(ctx context.Context, a db.Artist, since time.Time)
 				AlbumName:   album.Attributes.Name,
 				ReleaseDate: album.Attributes.ReleaseDate,
 				TrackCount:  int(album.Attributes.TrackCount),
+				Upcoming:    releaseTime.After(time.Now()),
 			})
 		}
 	}

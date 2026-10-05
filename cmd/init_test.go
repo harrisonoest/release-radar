@@ -42,7 +42,7 @@ func TestInitOrderCorrect_EnableTriggerCompleteAfterSetTotal(t *testing.T) {
 	)
 
 	// FIX: SetTotal first, THEN EnableTriggerComplete
-	bar.SetTotal(100, false) // total = 100
+	bar.SetTotal(100, false)    // total = 100
 	bar.EnableTriggerComplete() // triggerComplete = true, 0 >= 100 false, no done()
 
 	// Increment to 50

@@ -67,10 +67,15 @@ func TestLibraryArtists_Fetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Errorf("expected 2 artists, got %d", len(got))
+	// Artists without a catalog relationship are kept with an empty CatalogID
+	// so the Aggregator can resolve them by name instead of dropping them.
+	if len(got) != 3 {
+		t.Errorf("expected 3 artists, got %d", len(got))
 	}
-	for _, a := range got {
+	if got[2].CatalogID != "" {
+		t.Error("expected empty CatalogID for artist without catalog relationship")
+	}
+	for _, a := range got[:2] {
 		if a.CatalogID == "" {
 			t.Error("expected non-empty CatalogID")
 		}

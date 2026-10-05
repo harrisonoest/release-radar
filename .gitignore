@@ -3,3 +3,5 @@ release-radar
 *.db
 *-wal
 *-shm
+.gocache/
+.gopath/

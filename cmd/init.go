@@ -66,9 +66,9 @@ into the artists table without saving it as a permanent source. Accepts
 			Fetcher:    client,
 			Storefront: storefront,
 			Logger: func(format string, args ...interface{}) {
-				if verbose {
-					fmt.Printf("  "+format+"\n", args...)
-				}
+				// Resolution/coverage warnings must not hide behind -v:
+				// every dropped name is an artist the tool will miss.
+				fmt.Printf("  "+format+"\n", args...)
 			},
 		}
 
@@ -81,6 +81,9 @@ into the artists table without saving it as a permanent source. Accepts
 				&source.LibrarySongs{},
 				&source.LikedSongs{},
 			)
+		} else {
+			fmt.Println("NOTE: bare 'init' tracks library ARTISTS only. Artists you know through")
+			fmt.Println("albums, songs, liked songs, or playlists are missed — run 'init --all' for full coverage.")
 		}
 
 		runAgg := func(agg *source.Aggregator, srcs []source.Source, total int) error {

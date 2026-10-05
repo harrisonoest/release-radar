@@ -65,11 +65,12 @@ pkg/config/                            → Viper/TOML config loading
 
 ## Artist deduplication
 
-`init` applies a two-pass filter after fetching library artists:
+1. **Shortest-name wins**: when multiple library entries share a catalog ID, keep the shortest name
+2. **Collaboration filter applies ONLY to search-resolved names**: catalog-backed artists are never dropped for containing " & " / ", " / " X " / " feat. " / " ft. " (real bands like "Earth, Wind & Fire" must survive); search-resolved IDs whose name matches the collab heuristics are dropped, and search hits are accepted only when the returned name matches the query
 
-1. **Standalone detection**: artists without " & ", ", ", " X ", " feat. ", " ft. " in the name are "standalone"
-2. **Standalone-only**: only catalog IDs with ≥1 standalone entry are kept
-3. **Shortest-name wins**: when multiple library entries share a catalog ID, keep the shortest name
+## Release states
+
+The `releases` table drives all dedup. States: `added` (in playlist), `ignored` (user-silenced), `upcoming` (future-dated: announced pre-releases and placeholders — recorded, shown by `releases list --state upcoming`, never added to the playlist, re-checked until the date arrives). The scan watermark (`scan_state.last_scan`) does NOT advance when any artist query failed, so failed artists are re-checked next run; already-processed albums are pruned via the state machine.
 
 ## Rate limiting
 

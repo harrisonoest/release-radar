@@ -22,9 +22,9 @@ func (s *LibraryArtists) Fetch(ctx context.Context, c Fetcher) ([]RawArtist, err
 		if len(a.Relationships.Catalog.Data) > 0 {
 			catID = a.Relationships.Catalog.Data[0].ID
 		}
-		if catID == "" {
-			continue
-		}
+		// No catalog relationship (e.g. added offline): emit with an empty
+		// CatalogID so the Aggregator's name→ID resolution can still track
+		// the artist instead of silently dropping it.
 		out = append(out, RawArtist{
 			Name:      a.Attributes.Name,
 			CatalogID: catID,

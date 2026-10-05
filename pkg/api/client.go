@@ -99,9 +99,10 @@ func (c *Client) GetStorefront(ctx context.Context) (string, error) {
 }
 
 func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*ArtistAlbumsResult, error) {
-	watermark := since.AddDate(0, 0, -30)
 	pageSize := c.scanPageSize()
-	filter := "albums,singles,eps,compilations,live-albums"
+	// No type filter: the endpoint returns all album types (albums, singles,
+	// EPs, compilations, live albums) by default, and `filter[albums]` is not
+	// a documented query parameter.
 
 	var all []applemusic.Album
 	offset := 0
@@ -115,8 +116,8 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 	}
 
 	for {
-		u := fmt.Sprintf("v1/catalog/%s/artists/%s/albums?limit=%d&offset=%d&filter[albums]=%s",
-			storefront, artistID, pageSize, offset, filter)
+		u := fmt.Sprintf("v1/catalog/%s/artists/%s/albums?limit=%d&offset=%d",
+			storefront, artistID, pageSize, offset)
 		req, err := c.NewRequest("GET", u, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -142,33 +143,11 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 
 		all = append(all, result.Data...)
 
-		hitWatermark := false
-		for _, album := range result.Data {
-			if album.Attributes.ReleaseDate == "" {
-				continue
-			}
-			t, parseErr := time.Parse("2006-01-02", album.Attributes.ReleaseDate)
-			if parseErr == nil {
-				if t.Before(watermark) {
-					hitWatermark = true
-					break
-				}
-				continue
-			}
-			for _, layout := range []string{"2006-01", "2006"} {
-				if pt, perr := time.Parse(layout, album.Attributes.ReleaseDate); perr == nil {
-					if pt.Before(watermark) {
-						hitWatermark = true
-						break
-					}
-				}
-			}
-			if hitWatermark {
-				break
-			}
-		}
-
-		if hitWatermark || len(result.Data) < pageSize || (result.Meta.Total > 0 && len(all) >= result.Meta.Total) {
+		// Page to exhaustion. Do NOT stop early on old release dates: the
+		// API does not guarantee date-descending order, so a single old
+		// reissue on page 2 would truncate newer albums on page 3+. The
+		// scanner applies the `since` filter itself.
+		if len(result.Data) < pageSize || (result.Meta.Total > 0 && len(all) >= result.Meta.Total) {
 			return &ArtistAlbumsResult{Albums: all, Total: result.Meta.Total}, nil
 		}
 		offset += pageSize
@@ -189,14 +168,14 @@ type PlaylistTrackResult struct {
 	ReleaseDate string
 }
 
-// GetLibraryPlaylistCatalogTracks fetches the catalog tracks of a library playlist
-// with album metadata for backfill.
+// GetLibraryPlaylistCatalogTracks fetches ALL catalog tracks of a library
+// playlist with album metadata for backfill. Paginates with offset — a single
+// 100-track page silently truncated large playlists (and Liked Songs) to
+// their first 100 tracks.
 func (c *Client) GetLibraryPlaylistCatalogTracks(ctx context.Context, playlistID string, limit int) ([]PlaylistTrackResult, error) {
-	u := fmt.Sprintf("v1/me/library/playlists/%s/tracks?include=albums&limit=%d", playlistID, limit)
-	req, err := c.NewRequest("GET", u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	var out []PlaylistTrackResult
+	offset := 0
+
 	type trackResp struct {
 		Data []struct {
 			ID         string `json:"id"`
@@ -214,30 +193,40 @@ func (c *Client) GetLibraryPlaylistCatalogTracks(ctx context.Context, playlistID
 			} `json:"relationships"`
 		} `json:"data"`
 	}
-	var result trackResp
-	resp, err := c.Do(ctx, req, &result)
-	if err != nil {
-		return nil, fmt.Errorf("API request failed: %w", err)
-	}
-	if resp != nil && resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("playlist tracks returned %d", resp.StatusCode)
-	}
-	out := make([]PlaylistTrackResult, 0, len(result.Data))
-	for _, t := range result.Data {
-		p := PlaylistTrackResult{
-			TrackID:    t.ID,
-			AlbumName:  t.Attributes.AlbumName,
-			ArtistName: t.Attributes.ArtistName,
+
+	for {
+		u := fmt.Sprintf("v1/me/library/playlists/%s/tracks?include=albums&limit=%d&offset=%d", playlistID, limit, offset)
+		req, err := c.NewRequest("GET", u, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		if len(t.Relationships.Album.Data) > 0 {
-			p.AlbumID = t.Relationships.Album.Data[0].ID
+		var result trackResp
+		resp, err := c.Do(ctx, req, &result)
+		if err != nil {
+			return nil, fmt.Errorf("API request failed: %w", err)
 		}
-		out = append(out, p)
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		if resp != nil && resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("playlist tracks returned %d", resp.StatusCode)
+		}
+		for _, t := range result.Data {
+			p := PlaylistTrackResult{
+				TrackID:    t.ID,
+				AlbumName:  t.Attributes.AlbumName,
+				ArtistName: t.Attributes.ArtistName,
+			}
+			if len(t.Relationships.Album.Data) > 0 {
+				p.AlbumID = t.Relationships.Album.Data[0].ID
+			}
+			out = append(out, p)
+		}
+		if len(result.Data) < limit {
+			return out, nil
+		}
+		offset += limit
 	}
-	return out, nil
 }
 
 // LibraryAlbumsResult is the paginated result of GetAllLibraryAlbums.
@@ -294,8 +283,8 @@ func (c *Client) GetAllLibraryAlbums(ctx context.Context, limit int, onProgress 
 
 	type albumResponse struct {
 		Data []struct {
-			ID            string `json:"id"`
-			Attributes    struct {
+			ID         string `json:"id"`
+			Attributes struct {
 				Name       string `json:"name"`
 				ArtistName string `json:"artistName"`
 			} `json:"attributes"`

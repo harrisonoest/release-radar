@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -200,38 +201,87 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 				fmt.Printf("%d artists have no albums.\n", n)
 			}
 
-			if len(releases) == 0 {
+			// Split upcoming (future-dated: announced pre-releases and
+			// placeholders) from released. Upcoming releases are recorded so
+			// `releases list` can show them, but never added to the playlist.
+			var upcoming, released []scanner.Release
+			for _, r := range releases {
+				if r.Upcoming {
+					upcoming = append(upcoming, r)
+				} else {
+					released = append(released, r)
+				}
+			}
+
+			if !dryRun && len(upcoming) > 0 {
+				now := time.Now().UTC().Format(time.RFC3339)
+				for _, r := range upcoming {
+					if err := store.UpsertRelease(db.Release{
+						AlbumID:         r.AlbumID,
+						CatalogArtistID: r.ArtistID,
+						ArtistName:      r.ArtistName,
+						Name:            r.AlbumName,
+						ReleaseDate:     r.ReleaseDate,
+						TrackCount:      r.TrackCount,
+						State:           "upcoming",
+						FirstSeenAt:     now,
+					}); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: could not record upcoming release %s: %v\n", r.AlbumName, err)
+					}
+				}
+				fmt.Printf("\n%d upcoming release(s) recorded (use 'release-radar releases list --state upcoming').\n", len(upcoming))
+			}
+
+			failed := scan.FailedArtists()
+			if len(failed) > 0 {
+				fmt.Printf("\nWARNING: %d artist(s) failed this scan: %s\n", len(failed), strings.Join(failed, ", "))
+				fmt.Println("The scan timestamp will NOT advance, so these artists are re-checked next run.")
+			}
+
+			if len(released) == 0 {
 				fmt.Printf("No new releases found since %s.\n", since.Format("2006-01-02"))
-				if err := store.MarkScanned(0, 0); err != nil {
-					return fmt.Errorf("failed to update scan state: %w", err)
+				// Advance the watermark only when every artist was checked
+				// successfully; otherwise the failed artists' releases from
+				// this window would be skipped forever.
+				if len(failed) == 0 {
+					if err := store.MarkScanned(0, 0); err != nil {
+						return fmt.Errorf("failed to update scan state: %w", err)
+					}
 				}
 				return nil
 			}
 
-			sort.Slice(releases, func(i, j int) bool {
-				return releases[i].ReleaseDate > releases[j].ReleaseDate
+			sort.Slice(released, func(i, j int) bool {
+				return released[i].ReleaseDate > released[j].ReleaseDate
 			})
 
-			printReleases(releases)
+			printReleases(released)
 
 			if dryRun {
-				fmt.Printf("\nDry run — %d releases would be added (not saved).\n", len(releases))
+				fmt.Printf("\nDry run — %d releases would be added (not saved).\n", len(released))
 				return nil
 			}
+
+			// Same watermark safety on the add path: with failures, leave the
+			// timestamp alone — already-added albums are deduped via the
+			// releases table on the re-check.
+			deferAdvancing := len(failed) > 0
 
 			playlistID, err := pm.EnsurePlaylist(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to ensure playlist: %w", err)
 			}
 
-			fmt.Printf("\nAdding %d new releases to playlist…\n", len(releases))
-			added, err := pm.AddReleases(ctx, playlistID, releases)
+			fmt.Printf("\nAdding %d new releases to playlist…\n", len(released))
+			added, err := pm.AddReleases(ctx, playlistID, released)
 			if err != nil {
 				return fmt.Errorf("failed to add releases: %w", err)
 			}
 
-			if err := store.MarkScanned(len(releases), added); err != nil {
-				return fmt.Errorf("failed to update scan state: %w", err)
+			if !deferAdvancing {
+				if err := store.MarkScanned(len(released), added); err != nil {
+					return fmt.Errorf("failed to update scan state: %w", err)
+				}
 			}
 
 			fmt.Printf("Added %d albums to playlist.\n", added)

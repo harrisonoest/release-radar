@@ -114,29 +114,20 @@ func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases [
 		}
 
 		if len(newTracks) == 0 {
+			// Every track already exists in the playlist (e.g. the user added
+			// it manually). Record it so the scanner stops re-reporting it.
+			m.markAdded(rel)
 			continue
 		}
 
 		_, err = m.client.Me.AddLibraryTracksToPlaylist(ctx, playlistID,
 			applemusic.CreateLibraryPlaylistTrackData{Data: newTracks})
 		if err != nil {
-			return added, fmt.Errorf("failed to add tracks to playlist: %w", err)
+			fmt.Printf("  [warn] %s — %s: add failed: %v\n", rel.ArtistName, rel.AlbumName, err)
+			continue
 		}
 
-		if m.store != nil {
-			now := time.Now().UTC().Format(time.RFC3339)
-			_ = m.store.UpsertRelease(db.Release{
-				AlbumID:         rel.AlbumID,
-				CatalogArtistID: rel.ArtistID,
-				ArtistName:      rel.ArtistName,
-				Name:            rel.AlbumName,
-				ReleaseDate:     rel.ReleaseDate,
-				TrackCount:      rel.TrackCount,
-				State:           "added",
-				FirstSeenAt:     now,
-				AddedAt:         now,
-			})
-		}
+		m.markAdded(rel)
 
 		added++
 
@@ -144,6 +135,24 @@ func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases [
 	}
 
 	return added, nil
+}
+
+func (m *Manager) markAdded(rel scanner.Release) {
+	if m.store == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_ = m.store.UpsertRelease(db.Release{
+		AlbumID:         rel.AlbumID,
+		CatalogArtistID: rel.ArtistID,
+		ArtistName:      rel.ArtistName,
+		Name:            rel.AlbumName,
+		ReleaseDate:     rel.ReleaseDate,
+		TrackCount:      rel.TrackCount,
+		State:           "added",
+		FirstSeenAt:     now,
+		AddedAt:         now,
+	})
 }
 
 func (m *Manager) getExistingCatalogIDs(ctx context.Context, playlistID string) (map[string]bool, error) {
@@ -183,33 +192,46 @@ type songID struct {
 }
 
 func (m *Manager) getAlbumCatalogTrackIDs(ctx context.Context, albumID string) ([]songID, error) {
-	u := fmt.Sprintf("v1/catalog/%s/albums/%s", m.storefront, albumID)
-	req, err := m.client.NewRequest("GET", u, nil)
-	if err != nil {
-		return nil, err
-	}
+	// Paginate: the tracks relationship defaults to 100 items, silently
+	// truncating deluxe/box-set albums.
+	var out []songID
+	offset := 0
+	pageSize := 100
 
 	type albumResponse struct {
 		Data []struct {
 			Relationships struct {
 				Tracks struct {
 					Data []songID `json:"data"`
+					Next string   `json:"next,omitempty"`
 				} `json:"tracks"`
 			} `json:"relationships"`
 		} `json:"data"`
 	}
 
-	result := &albumResponse{}
-	resp, err := m.client.Do(ctx, req, result)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	if len(result.Data) == 0 {
-		return nil, fmt.Errorf("album not found")
-	}
+	for {
+		u := fmt.Sprintf("v1/catalog/%s/albums/%s/tracks?limit=%d&offset=%d", m.storefront, albumID, pageSize, offset)
+		req, err := m.client.NewRequest("GET", u, nil)
+		if err != nil {
+			return nil, err
+		}
 
-	return result.Data[0].Relationships.Tracks.Data, nil
+		result := &albumResponse{}
+		resp, err := m.client.Do(ctx, req, result)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("status %d", resp.StatusCode)
+		}
+		if len(result.Data) == 0 && offset == 0 {
+			return nil, fmt.Errorf("album not found")
+		}
+
+		out = append(out, result.Data[0].Relationships.Tracks.Data...)
+		if len(result.Data) == 0 || len(result.Data[0].Relationships.Tracks.Data) < pageSize {
+			return out, nil
+		}
+		offset += pageSize
+	}
 }
