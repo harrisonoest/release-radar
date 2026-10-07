@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,13 +15,30 @@ import (
 
 type ProgressCallback func(done, total int)
 
+// ErrRateLimited is returned (wrapped) when the API responds 429. Callers
+// should match it with errors.Is rather than string comparison.
+var ErrRateLimited = errors.New("rate limited")
+
+// StatusError carries a non-2xx HTTP status returned by the API.
+type StatusError struct {
+	StatusCode int
+	Status     string
+}
+
+func (e *StatusError) Error() string {
+	if e.Status != "" {
+		return fmt.Sprintf("API returned status %d: %s", e.StatusCode, e.Status)
+	}
+	return fmt.Sprintf("API returned status %d", e.StatusCode)
+}
+
 type LibraryArtists struct {
 	Data []LibraryArtist `json:"data"`
 	Href string          `json:"href,omitempty"`
 	Next string          `json:"next,omitempty"`
 	Meta struct {
 		Total int `json:"total"`
-	} `json:"meta,omitempty"`
+	} `json:"meta"`
 }
 
 type LibraryArtist struct {
@@ -53,10 +71,17 @@ type ArtistAlbumsResult struct {
 	Total  int
 }
 
+// Client wraps the go-apple-music client. The lazy `storefront` cache is NOT
+// safe for concurrent use: a Client is expected to be used from a single
+// goroutine (or externally synchronized).
 type Client struct {
 	*applemusic.Client
 	storefront string
 }
+
+// scanPageSize is the page size for catalog album pagination. The API caps
+// it at 25 when `include=catalog` is used on deep pagination.
+const scanPageSize = 25
 
 type ClientInterface interface {
 	GetStorefront(ctx context.Context) (string, error)
@@ -99,7 +124,7 @@ func (c *Client) GetStorefront(ctx context.Context) (string, error) {
 }
 
 func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID string, since time.Time) (*ArtistAlbumsResult, error) {
-	pageSize := c.scanPageSize()
+	pageSize := scanPageSize
 	// No type filter: the endpoint returns all album types (albums, singles,
 	// EPs, compilations, live albums) by default, and `filter[albums]` is not
 	// a documented query parameter.
@@ -117,7 +142,7 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 
 	for {
 		u := fmt.Sprintf("v1/catalog/%s/artists/%s/albums?limit=%d&offset=%d",
-			storefront, artistID, pageSize, offset)
+			url.PathEscape(storefront), url.PathEscape(artistID), pageSize, offset)
 		req, err := c.NewRequest("GET", u, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -131,10 +156,10 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 				return &ArtistAlbumsResult{}, nil
 			}
 			if resp.StatusCode == http.StatusTooManyRequests {
-				return nil, fmt.Errorf("rate limited (429)")
+				return nil, fmt.Errorf("%w: %w", ErrRateLimited, &StatusError{StatusCode: resp.StatusCode})
 			}
 			if resp.StatusCode != http.StatusOK {
-				return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+				return nil, &StatusError{StatusCode: resp.StatusCode}
 			}
 		}
 		if err != nil {
@@ -152,10 +177,6 @@ func (c *Client) GetArtistAlbums(ctx context.Context, storefront, artistID strin
 		}
 		offset += pageSize
 	}
-}
-
-func (c *Client) scanPageSize() int {
-	return 25
 }
 
 // PlaylistTrackResult is a single track returned by GetLibraryPlaylistCatalogTracks
@@ -195,7 +216,8 @@ func (c *Client) GetLibraryPlaylistCatalogTracks(ctx context.Context, playlistID
 	}
 
 	for {
-		u := fmt.Sprintf("v1/me/library/playlists/%s/tracks?include=albums&limit=%d&offset=%d", playlistID, limit, offset)
+		u := fmt.Sprintf("v1/me/library/playlists/%s/tracks?include=albums&limit=%d&offset=%d",
+			url.PathEscape(playlistID), limit, offset)
 		req, err := c.NewRequest("GET", u, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -274,6 +296,53 @@ type ArtistSearchEntry struct {
 	Name string
 }
 
+// doWithRetry issues a GET against u, decoding the body into result, with up
+// to 3 attempts and linear backoff (0.5s/1s/1.5s) on 5xx/429. On success it
+// returns the response. On failure it returns an error and result must be
+// treated as stale; exhausted retries always produce an error carrying the
+// last HTTP status (and ErrRateLimited when it was a 429).
+func (c *Client) doWithRetry(ctx context.Context, u string, result any) (*applemusic.Response, error) {
+	const maxAttempts = 3
+	var lastStatus int
+	var lastStatusText string
+	var lastErr error
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
+		req, err := c.NewRequest("GET", u, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		resp, err := c.Do(ctx, req, result)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+		if resp != nil && (resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests) {
+			lastStatus, lastStatusText, lastErr = resp.StatusCode, resp.Status, err
+			continue
+		}
+		if resp != nil {
+			return nil, &StatusError{StatusCode: resp.StatusCode, Status: resp.Status}
+		}
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	if lastStatus == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("giving up after %d attempts: %w: %w",
+			maxAttempts, ErrRateLimited, &StatusError{StatusCode: lastStatus, Status: lastStatusText})
+	}
+	if lastStatus != 0 {
+		return nil, fmt.Errorf("giving up after %d attempts: %w",
+			maxAttempts, &StatusError{StatusCode: lastStatus, Status: lastStatusText})
+	}
+	return nil, fmt.Errorf("API request failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
 // GetAllLibraryAlbums pages through the user's library albums.
 func (c *Client) GetAllLibraryAlbums(ctx context.Context, limit int, onProgress func(page, total int)) (*LibraryAlbumsResult, error) {
 	var all []LibraryAlbum
@@ -304,39 +373,9 @@ func (c *Client) GetAllLibraryAlbums(ctx context.Context, limit int, onProgress 
 
 	for {
 		u := fmt.Sprintf("v1/me/library/albums?limit=%d&offset=%d&include=artists", limit, offset)
-		var result *albumResponse
-		var resp *applemusic.Response
-		var err error
-
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
-				}
-			}
-			req, reqErr := c.NewRequest("GET", u, nil)
-			if reqErr != nil {
-				return nil, fmt.Errorf("failed to create request: %w", reqErr)
-			}
-			result = &albumResponse{}
-			resp, err = c.Do(ctx, req, result)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				break
-			}
-			if resp != nil && resp.StatusCode >= 500 {
-				continue
-			}
-			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
-				continue
-			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("API request failed: %w", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+		result := &albumResponse{}
+		if _, err := c.doWithRetry(ctx, u, result); err != nil {
+			return nil, err
 		}
 
 		for _, item := range result.Data {
@@ -392,39 +431,9 @@ func (c *Client) GetAllLibrarySongs(ctx context.Context, limit int, onProgress f
 
 	for {
 		u := fmt.Sprintf("v1/me/library/songs?limit=%d&offset=%d", limit, offset)
-		var result *songResponse
-		var resp *applemusic.Response
-		var err error
-
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
-				}
-			}
-			req, reqErr := c.NewRequest("GET", u, nil)
-			if reqErr != nil {
-				return nil, fmt.Errorf("failed to create request: %w", reqErr)
-			}
-			result = &songResponse{}
-			resp, err = c.Do(ctx, req, result)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				break
-			}
-			if resp != nil && resp.StatusCode >= 500 {
-				continue
-			}
-			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
-				continue
-			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("API request failed: %w", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+		result := &songResponse{}
+		if _, err := c.doWithRetry(ctx, u, result); err != nil {
+			return nil, err
 		}
 
 		for _, item := range result.Data {
@@ -508,39 +517,9 @@ func (c *Client) GetAllLibraryArtists(ctx context.Context, limit int, onProgress
 	for {
 		u := fmt.Sprintf("v1/me/library/artists?limit=%d&offset=%d&include=catalog", limit, offset)
 
-		var result *LibraryArtists
-		var resp *applemusic.Response
-		var err error
-
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
-				}
-			}
-			req, reqErr := c.NewRequest("GET", u, nil)
-			if reqErr != nil {
-				return nil, fmt.Errorf("failed to create request: %w", reqErr)
-			}
-			result = &LibraryArtists{}
-			resp, err = c.Do(ctx, req, result)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				break
-			}
-			if resp != nil && resp.StatusCode >= 500 {
-				continue
-			}
-			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
-				continue
-			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("API request failed: %w", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+		result := &LibraryArtists{}
+		if _, err := c.doWithRetry(ctx, u, result); err != nil {
+			return nil, err
 		}
 
 		all = append(all, result.Data...)

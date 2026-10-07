@@ -2,9 +2,9 @@ package playlist
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/harrisonoest/release-radar/internal/scanner"
@@ -72,20 +72,21 @@ func (m *Manager) EnsurePlaylist(ctx context.Context) (string, error) {
 	return created.Data[0].Id, nil
 }
 
-// EnsurePlaylistSilent returns nil if the configured playlist exists in the
-// user's library. It does NOT create the playlist and does NOT fail if missing.
-func (m *Manager) EnsurePlaylistSilent(ctx context.Context) error {
+// EnsurePlaylistSilent returns the ID of the configured playlist if it exists
+// in the user's library. It does NOT create the playlist and does NOT fail if
+// missing (empty ID, nil error).
+func (m *Manager) EnsurePlaylistSilent(ctx context.Context) (string, error) {
 	desired := m.cfg.Playlist.Name
 	all, _, err := m.client.Me.GetAllLibraryPlaylists(ctx, &applemusic.PageOptions{Limit: 100})
 	if err != nil {
-		return fmt.Errorf("failed to fetch playlists: %w", err)
+		return "", fmt.Errorf("failed to fetch playlists: %w", err)
 	}
 	for _, p := range all.Data {
 		if p.Attributes.Name == desired {
-			return nil
+			return p.Id, nil
 		}
 	}
-	return fmt.Errorf("playlist %q not found", desired)
+	return "", nil
 }
 
 func (m *Manager) AddReleases(ctx context.Context, playlistID string, releases []scanner.Release) (int, error) {
@@ -142,7 +143,15 @@ func (m *Manager) markAdded(rel scanner.Release) {
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_ = m.store.UpsertRelease(db.Release{
+	// Preserve the original first-seen timestamp when the release row
+	// already exists: UpsertRelease has no COALESCE on first_seen_at.
+	firstSeen := now
+	if existing, err := m.store.GetRelease(rel.AlbumID); err != nil {
+		fmt.Printf("  [warn] %s — %s: failed to read existing release: %v\n", rel.ArtistName, rel.AlbumName, err)
+	} else if existing != nil && existing.FirstSeenAt != "" {
+		firstSeen = existing.FirstSeenAt
+	}
+	if err := m.store.UpsertRelease(db.Release{
 		AlbumID:         rel.AlbumID,
 		CatalogArtistID: rel.ArtistID,
 		ArtistName:      rel.ArtistName,
@@ -150,9 +159,11 @@ func (m *Manager) markAdded(rel scanner.Release) {
 		ReleaseDate:     rel.ReleaseDate,
 		TrackCount:      rel.TrackCount,
 		State:           "added",
-		FirstSeenAt:     now,
+		FirstSeenAt:     firstSeen,
 		AddedAt:         now,
-	})
+	}); err != nil {
+		fmt.Printf("  [warn] %s — %s: failed to record release: %v\n", rel.ArtistName, rel.AlbumName, err)
+	}
 }
 
 func (m *Manager) getExistingCatalogIDs(ctx context.Context, playlistID string) (map[string]bool, error) {
@@ -184,7 +195,8 @@ func (m *Manager) getExistingCatalogIDs(ctx context.Context, playlistID string) 
 }
 
 func is404(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found"))
+	var statusErr *api.StatusError
+	return errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound
 }
 
 type songID struct {

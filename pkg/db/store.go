@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,38 +162,35 @@ func (s *Store) Close() error {
 
 func (s *Store) migrateSchema() error {
 	var columnName string
-	err := s.db.QueryRow("PRAGMA table_info(artists)").Scan(
-		new(int), new(string), new(string), new(int), new(interface{}), new(int),
-	)
-	if err != nil {
+	err := s.db.QueryRow("SELECT name FROM pragma_table_info('artists') WHERE name = 'library_id' AND pk = 1").Scan(&columnName)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No legacy schema; nothing to migrate.
 		return nil
 	}
-
-	err = s.db.QueryRow("SELECT name FROM pragma_table_info('artists') WHERE name = 'library_id' AND pk = 1").Scan(&columnName)
-	if err == nil {
-		fmt.Fprintf(os.Stderr, "Migrating database schema (catalog_id key)…\n")
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
-		if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS artists_new (catalog_id TEXT PRIMARY KEY, library_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, href TEXT NOT NULL, last_seen TEXT NOT NULL)"); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("INSERT INTO artists_new (catalog_id, library_id, name, href, last_seen) SELECT catalog_id, library_id, name, href, last_seen FROM artists"); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("DROP TABLE artists"); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("ALTER TABLE artists_new RENAME TO artists"); err != nil {
-			return err
-		}
-		return tx.Commit()
+	if err != nil {
+		return fmt.Errorf("inspect artists schema: %w", err)
 	}
 
-	return nil
+	fmt.Fprintf(os.Stderr, "Migrating database schema (catalog_id key)…\n")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS artists_new (catalog_id TEXT PRIMARY KEY, library_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, href TEXT NOT NULL, last_seen TEXT NOT NULL)"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO artists_new (catalog_id, library_id, name, href, last_seen) SELECT catalog_id, library_id, name, href, last_seen FROM artists"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DROP TABLE artists"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("ALTER TABLE artists_new RENAME TO artists"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) migrateFromJSON(cacheDir string) error {
@@ -202,15 +200,23 @@ func (s *Store) migrateFromJSON(cacheDir string) error {
 
 	// Only migrate if no artists are present
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM artists").Scan(&count)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM artists").Scan(&count); err != nil {
+		return fmt.Errorf("migrate check artists: %w", err)
+	}
 	if count > 0 {
 		return nil
 	}
 
-	migrated := false
+	artistsMigrated := false
+	stateMigrated := false
+	authMigrated := false
 
 	// Migrate artists
-	if data, err := os.ReadFile(artistsPath); err == nil {
+	data, err := os.ReadFile(artistsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("migrate read artists.json: %w", err)
+	}
+	if err == nil {
 		var cache struct {
 			Artists []struct {
 				ID        string `json:"id"`
@@ -220,57 +226,93 @@ func (s *Store) migrateFromJSON(cacheDir string) error {
 				LastSeen  string `json:"last_seen"`
 			} `json:"artists"`
 		}
-		if json.Unmarshal(data, &cache) == nil && len(cache.Artists) > 0 {
-			tx, _ := s.db.Begin()
-			if tx != nil {
-				stmt, err := tx.Prepare("INSERT OR REPLACE INTO artists (catalog_id, library_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
-				if err == nil {
-					for _, a := range cache.Artists {
-						stmt.Exec(a.CatalogID, a.ID, a.Name, a.Href, a.LastSeen)
-					}
-					tx.Commit()
-					migrated = true
-				} else {
-					tx.Rollback()
+		if err := json.Unmarshal(data, &cache); err != nil {
+			return fmt.Errorf("migrate parse artists.json: %w", err)
+		}
+		if len(cache.Artists) > 0 {
+			tx, err := s.db.Begin()
+			if err != nil {
+				return fmt.Errorf("migrate artists begin: %w", err)
+			}
+			defer tx.Rollback()
+
+			stmt, err := tx.Prepare("INSERT OR REPLACE INTO artists (catalog_id, library_id, name, href, last_seen) VALUES (?, ?, ?, ?, ?)")
+			if err != nil {
+				return fmt.Errorf("migrate artists prepare: %w", err)
+			}
+			defer stmt.Close()
+
+			for _, a := range cache.Artists {
+				if _, err := stmt.Exec(a.CatalogID, a.ID, a.Name, a.Href, a.LastSeen); err != nil {
+					return fmt.Errorf("migrate artist %s: %w", a.Name, err)
 				}
 			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("migrate artists commit: %w", err)
+			}
+			artistsMigrated = true
 		}
 	}
 
 	// Migrate scan state
-	if data, err := os.ReadFile(statePath); err == nil {
+	data, err = os.ReadFile(statePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("migrate read scan_state.json: %w", err)
+	}
+	if err == nil {
 		var state struct {
 			LastScan    string `json:"last_scan"`
 			AlbumsFound int    `json:"albums_found"`
 			AlbumsAdded int    `json:"albums_added"`
 		}
-		if json.Unmarshal(data, &state) == nil {
-			s.db.Exec(`INSERT OR REPLACE INTO scan_state (id, last_scan, albums_found, albums_added) VALUES (1, ?, ?, ?)`,
-				state.LastScan, state.AlbumsFound, state.AlbumsAdded)
+		if err := json.Unmarshal(data, &state); err != nil {
+			return fmt.Errorf("migrate parse scan_state.json: %w", err)
 		}
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO scan_state (id, last_scan, albums_found, albums_added) VALUES (1, ?, ?, ?)`,
+			state.LastScan, state.AlbumsFound, state.AlbumsAdded); err != nil {
+			return fmt.Errorf("migrate scan state: %w", err)
+		}
+		stateMigrated = true
 	}
 
 	// Migrate auth
-	var authCount int
-	s.db.QueryRow("SELECT COUNT(*) FROM auth").Scan(&authCount)
-	if authCount == 0 {
-		if data, err := os.ReadFile(authPath); err == nil {
-			var auth struct {
-				DeveloperToken string `json:"developer_token"`
-				DeveloperExp   string `json:"developer_exp"`
-				MusicUserToken string `json:"music_user_token"`
+	data, err = os.ReadFile(authPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("migrate read auth.json: %w", err)
+	}
+	if err == nil {
+		var auth struct {
+			DeveloperToken string `json:"developer_token"`
+			DeveloperExp   string `json:"developer_exp"`
+			MusicUserToken string `json:"music_user_token"`
+		}
+		if err := json.Unmarshal(data, &auth); err != nil {
+			return fmt.Errorf("migrate parse auth.json: %w", err)
+		}
+		if auth.MusicUserToken != "" {
+			if _, err := s.db.Exec(`INSERT OR IGNORE INTO auth (id, developer_token, developer_exp, music_user_token) VALUES (1, ?, ?, ?)`,
+				auth.DeveloperToken, auth.DeveloperExp, auth.MusicUserToken); err != nil {
+				return fmt.Errorf("migrate auth: %w", err)
 			}
-			if json.Unmarshal(data, &auth) == nil && auth.MusicUserToken != "" {
-				s.db.Exec(`INSERT INTO auth (id, developer_token, developer_exp, music_user_token) VALUES (1, ?, ?, ?)`,
-					auth.DeveloperToken, auth.DeveloperExp, auth.MusicUserToken)
-			}
+			authMigrated = true
 		}
 	}
 
-	// Clean up migrated JSON files
-	if migrated {
-		os.Remove(artistsPath)
-		os.Remove(statePath)
+	// Clean up migrated JSON files only after every section succeeded
+	if artistsMigrated {
+		if err := os.Remove(artistsPath); err != nil {
+			return fmt.Errorf("migrate remove artists.json: %w", err)
+		}
+	}
+	if stateMigrated {
+		if err := os.Remove(statePath); err != nil {
+			return fmt.Errorf("migrate remove scan_state.json: %w", err)
+		}
+	}
+	if authMigrated {
+		if err := os.Remove(authPath); err != nil {
+			return fmt.Errorf("migrate remove auth.json: %w", err)
+		}
 	}
 
 	return nil
@@ -280,10 +322,51 @@ func (s *Store) migrateFromJSON(cacheDir string) error {
 // artist in the artists table that doesn't already have one. Idempotent: re-running
 // has no effect because of the composite primary key.
 func (s *Store) backfillArtistSources() error {
+	// Cheap guard: skip the INSERT...SELECT entirely once every artist has a
+	// 'library_artists' source row, keeping repeated Opens O(1).
+	var missing int
+	if err := s.db.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM artists a
+		WHERE a.catalog_id != '' AND NOT EXISTS (
+			SELECT 1 FROM artist_sources s
+			WHERE s.catalog_id = a.catalog_id AND s.source_type = 'library_artists')
+	)`).Scan(&missing); err != nil {
+		return fmt.Errorf("backfill check: %w", err)
+	}
+	if missing == 0 {
+		return nil
+	}
+
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO artist_sources (catalog_id, source_type, source_id, added_at)
 		SELECT catalog_id, 'library_artists', '', ? FROM artists
 		WHERE catalog_id != ''`, time.Now().UTC().Format(time.RFC3339))
 	return err
+}
+
+// UpsertArtistSources upserts many artist-source rows in a single transaction,
+// mirroring the ReplaceArtists tx + prepared-statement pattern.
+func (s *Store) UpsertArtistSources(sources []ArtistSource) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO artist_sources (catalog_id, source_type, source_id, added_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (catalog_id, source_type, source_id) DO UPDATE SET added_at = excluded.added_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, src := range sources {
+		if _, err := stmt.Exec(src.CatalogID, src.SourceType, src.SourceID, src.AddedAt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) ReplaceArtists(artists []Artist) error {
@@ -397,13 +480,50 @@ func (s *Store) UpsertRelease(r Release) error {
 	return err
 }
 
+// UpsertReleases upserts many releases in a single transaction (tx +
+// prepared-statement pattern), with the same conflict semantics as
+// UpsertRelease.
+func (s *Store) UpsertReleases(releases []Release) error {
+	if len(releases) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO releases (album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (album_id) DO UPDATE SET
+            state = excluded.state,
+            added_at = COALESCE(NULLIF(excluded.added_at, ''), releases.added_at),
+            track_count = excluded.track_count,
+            name = excluded.name,
+            artist_name = excluded.artist_name,
+            release_date = excluded.release_date`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, r := range releases {
+		if _, err := stmt.Exec(r.AlbumID, r.CatalogArtistID, r.ArtistName, r.Name, r.ReleaseDate,
+			r.TrackCount, r.State, r.FirstSeenAt, r.AddedAt); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) GetRelease(albumID string) (*Release, error) {
 	row := s.db.QueryRow(`SELECT album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at
         FROM releases WHERE album_id = ?`, albumID)
 	var r Release
 	err := row.Scan(&r.AlbumID, &r.CatalogArtistID, &r.ArtistName, &r.Name, &r.ReleaseDate,
 		&r.TrackCount, &r.State, &r.FirstSeenAt, &r.AddedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -432,9 +552,15 @@ func (s *Store) SkippedReleaseIDs() (map[string]bool, error) {
 	return ids, rows.Err()
 }
 
-func (s *Store) ListReleasesByState(state string) ([]Release, error) {
-	rows, err := s.db.Query(`SELECT album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at
-        FROM releases WHERE state = ? ORDER BY release_date DESC`, state)
+func (s *Store) ListReleasesByState(state string, limit int) ([]Release, error) {
+	query := `SELECT album_id, catalog_artist_id, artist_name, name, release_date, track_count, state, first_seen_at, added_at
+        FROM releases WHERE state = ? ORDER BY release_date DESC`
+	args := []any{state}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +617,7 @@ func (s *Store) GetScanState() (*ScanState, error) {
 	var state ScanState
 	err := s.db.QueryRow("SELECT last_scan, albums_found, albums_added FROM scan_state WHERE id = 1").Scan(
 		&state.LastScan, &state.AlbumsFound, &state.AlbumsAdded)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return &ScanState{}, nil
 	}
 	if err != nil {
@@ -517,7 +643,7 @@ func (s *Store) GetAuth() (*AuthTokens, error) {
 	var auth AuthTokens
 	err := s.db.QueryRow("SELECT developer_token, developer_exp, music_user_token FROM auth WHERE id = 1").Scan(
 		&auth.DeveloperToken, &auth.DeveloperExp, &auth.MusicUserToken)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -548,9 +674,15 @@ func (s *Store) UnignoreArtist(catalogID string) error {
 }
 
 func (s *Store) IsArtistIgnored(catalogID string) (bool, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM ignored_artists WHERE catalog_id = ?", catalogID).Scan(&count)
-	return count > 0, err
+	var one int
+	err := s.db.QueryRow("SELECT 1 FROM ignored_artists WHERE catalog_id = ? LIMIT 1", catalogID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) ListIgnoredArtists() ([]Artist, error) {

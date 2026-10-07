@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -87,7 +88,6 @@ into the artists table without saving it as a permanent source. Accepts
 		}
 
 		runAgg := func(agg *source.Aggregator, srcs []source.Source, total int) error {
-			var srcCount atomic.Int64
 			var srcName atomic.Value
 			var srcArtists atomic.Int64
 			srcName.Store("")
@@ -114,7 +114,6 @@ into the artists table without saving it as a permanent source. Accepts
 			)
 
 			agg.OnSourceDone = func(sourceNum, totalSources int, name string, artistCount int) {
-				srcCount.Store(int64(sourceNum))
 				srcName.Store(name)
 				srcArtists.Store(int64(artistCount))
 				bar.SetCurrent(int64(sourceNum))
@@ -132,21 +131,21 @@ into the artists table without saving it as a permanent source. Accepts
 
 		if initFromPlaylist != "" {
 			sourceID := initFromPlaylist
-			if len(sourceID) > 5 && sourceID[:5] == "name:" {
+			if playlistName, isName := strings.CutPrefix(sourceID, "name:"); isName {
 				playlists, err := client.GetAllLibraryPlaylists(ctx)
 				if err != nil {
 					return fmt.Errorf("failed to list playlists: %w", err)
 				}
 				found := false
 				for _, p := range playlists {
-					if p.Name == sourceID[5:] {
+					if p.Name == playlistName {
 						sourceID = p.ID
 						found = true
 						break
 					}
 				}
 				if !found {
-					return fmt.Errorf("playlist named %q not found in your library", sourceID[5:])
+					return fmt.Errorf("playlist named %q not found in your library", playlistName)
 				}
 			}
 			ps, err := source.Build("playlist", sourceID)

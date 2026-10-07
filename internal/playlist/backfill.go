@@ -60,9 +60,9 @@ func (m *Manager) BackfillFromPlaylist(ctx context.Context, playlistID string) (
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	n := 0
+	releases := make([]db.Release, 0, len(seen))
 	for _, t := range seen {
-		if err := m.store.UpsertRelease(db.Release{
+		releases = append(releases, db.Release{
 			AlbumID:     t.AlbumID,
 			ArtistName:  t.ArtistName,
 			Name:        t.AlbumName,
@@ -70,12 +70,12 @@ func (m *Manager) BackfillFromPlaylist(ctx context.Context, playlistID string) (
 			State:       "added",
 			FirstSeenAt: now,
 			AddedAt:     now,
-		}); err != nil {
-			return n, fmt.Errorf("failed to upsert release %s: %w", t.AlbumID, err)
-		}
-		n++
+		})
 	}
-	return n, nil
+	if err := m.store.UpsertReleases(releases); err != nil {
+		return 0, fmt.Errorf("failed to backfill releases: %w", err)
+	}
+	return len(releases), nil
 }
 
 func (m *Manager) backfillFetchTracks(ctx context.Context, playlistID string) ([]BackfillTrack, error) {

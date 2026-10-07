@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -29,7 +30,7 @@ func (s *LikedSongs) Fetch(ctx context.Context, c Fetcher) ([]RawArtist, error) 
 		}
 	}
 	if likedID == "" {
-		return nil, fmt.Errorf("Liked Songs playlist not found")
+		return nil, errors.New("Liked Songs playlist not found")
 	}
 	// Delegate to playlist fetch logic.
 	ps := &PlaylistSource{playlistID: likedID}

@@ -15,7 +15,7 @@ func (src *LibrarySongs) Fetch(ctx context.Context, c Fetcher) ([]RawArtist, err
 	if err != nil {
 		return nil, err
 	}
-	out := make([]RawArtist, 0)
+	out := make([]RawArtist, 0, len(res.Songs))
 	seen := make(map[string]bool)
 	for _, song := range res.Songs {
 		if song.ArtistName == "" || seen[song.ArtistName] {

@@ -27,11 +27,11 @@ var releasesListCmd = &cobra.Command{
 		defer store.Close()
 
 		if state != "" {
-			releases, err := store.ListReleasesByState(state)
+			releases, err := store.ListReleasesByState(state, limit)
 			if err != nil {
 				return err
 			}
-			printReleasesList(releases, limit)
+			printReleasesList(releases)
 			return nil
 		}
 
@@ -47,10 +47,7 @@ var releasesListCmd = &cobra.Command{
 	},
 }
 
-func printReleasesList(releases []db.Release, limit int) {
-	if limit > 0 && len(releases) > limit {
-		releases = releases[:limit]
-	}
+func printReleasesList(releases []db.Release) {
 	if len(releases) == 0 {
 		fmt.Println("No releases.")
 		return

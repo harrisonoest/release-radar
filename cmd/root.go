@@ -10,8 +10,9 @@ var (
 	dryRun  bool
 
 	rootCmd = &cobra.Command{
-		Use:   "release-radar",
-		Short: "Track new music releases from artists in your Apple Music library",
+		Use:          "release-radar",
+		Short:        "Track new music releases from artists in your Apple Music library",
+		SilenceUsage: true,
 		Long: `Release Radar scans the artists in your Apple Music library,
 checks for new album releases since your last scan, and adds them
 to a dedicated playlist.`,

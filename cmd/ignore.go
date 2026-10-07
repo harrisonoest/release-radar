@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -106,14 +107,15 @@ var ignoreListCmd = &cobra.Command{
 	},
 }
 
+// catalogIDFormat matches numeric catalog IDs (e.g., "1068300376") and
+// prefixed library IDs (e.g., "r.xUjxaAb").
+var catalogIDFormat = regexp.MustCompile(`^[0-9]+$|^[a-z]\.[a-zA-Z0-9]+$`)
+
 func validateCatalogID(catalogID string) error {
 	if catalogID == "" {
-		return fmt.Errorf("catalog_id cannot be empty")
+		return errors.New("catalog_id cannot be empty")
 	}
-	// Catalog IDs are numeric strings (e.g., "1068300376")
-	// Library IDs are prefixed (e.g., "r.xUjxaAb")
-	validFormat := regexp.MustCompile(`^[0-9]+$|^[a-z]\.[a-zA-Z0-9]+$`)
-	if !validFormat.MatchString(catalogID) {
+	if !catalogIDFormat.MatchString(catalogID) {
 		return fmt.Errorf("invalid catalog_id format: %s (expected numeric ID or prefixed library ID like 'r.xUjxaAb')", catalogID)
 	}
 	return nil

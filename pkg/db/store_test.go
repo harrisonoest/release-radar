@@ -653,8 +653,8 @@ func TestMigration_FromJSON(t *testing.T) {
 		if _, err := os.Stat(statePath); err == nil {
 			t.Error("scan_state.json should be removed after migration")
 		}
-		if _, err := os.Stat(authPath); err != nil {
-			t.Error("auth.json should NOT be removed")
+		if _, err := os.Stat(authPath); err == nil {
+			t.Error("auth.json should be removed after successful migration")
 		}
 	})
 }
@@ -799,6 +799,52 @@ func TestArtistSources_UpsertList(t *testing.T) {
 	}
 }
 
+func TestUpsertArtistSources_Batch(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	batch := []ArtistSource{
+		{CatalogID: "1", SourceType: "library_artists", SourceID: "", AddedAt: now},
+		{CatalogID: "2", SourceType: "playlist", SourceID: "p.abc", AddedAt: now},
+		{CatalogID: "3", SourceType: "search", SourceID: "s.xyz", AddedAt: now},
+	}
+	if err := store.UpsertArtistSources(batch); err != nil {
+		t.Fatalf("UpsertArtistSources failed: %v", err)
+	}
+
+	list, err := store.ListArtistSources()
+	if err != nil {
+		t.Fatalf("ListArtistSources failed: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("expected 3 sources, got %d", len(list))
+	}
+
+	// Re-upserting the same rows updates added_at without duplicating.
+	batch[0].AddedAt = time.Now().Add(time.Hour).Format(time.RFC3339)
+	if err := store.UpsertArtistSources(batch); err != nil {
+		t.Fatalf("UpsertArtistSources (update) failed: %v", err)
+	}
+	list, _ = store.ListArtistSources()
+	if len(list) != 3 {
+		t.Errorf("expected still 3 sources after re-upsert, got %d", len(list))
+	}
+	for _, src := range list {
+		if src.CatalogID == "1" && src.AddedAt != batch[0].AddedAt {
+			t.Errorf("expected added_at updated for catalog 1, got %s", src.AddedAt)
+		}
+	}
+
+	if err := store.UpsertArtistSources(nil); err != nil {
+		t.Errorf("UpsertArtistSources (empty) failed: %v", err)
+	}
+}
+
 func TestReleases_UpsertStateTransitions(t *testing.T) {
 	tmpDir := t.TempDir()
 	store, err := Open(tmpDir)
@@ -914,12 +960,20 @@ func TestReleases_ListByStateAndCounts(t *testing.T) {
 		}
 	}
 
-	added, err := store.ListReleasesByState("added")
+	added, err := store.ListReleasesByState("added", 0)
 	if err != nil {
 		t.Fatalf("ListReleasesByState: %v", err)
 	}
 	if len(added) != 2 {
 		t.Errorf("expected 2 added, got %d", len(added))
+	}
+
+	limited, err := store.ListReleasesByState("added", 1)
+	if err != nil {
+		t.Fatalf("ListReleasesByState (limit): %v", err)
+	}
+	if len(limited) != 1 || limited[0].AlbumID != "a4" {
+		t.Errorf("expected newest added release a4, got %+v", limited)
 	}
 
 	counts, err := store.CountReleasesByState()

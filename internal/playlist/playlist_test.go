@@ -3,6 +3,7 @@ package playlist
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -42,17 +43,22 @@ func TestIs404(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "404 error",
-			err:      errors.New("404 not found"),
+			name:     "404 status error",
+			err:      &api.StatusError{StatusCode: http.StatusNotFound, Status: "Not Found"},
 			expected: true,
 		},
 		{
-			name:     "not found error",
-			err:      errors.New("resource not found"),
+			name:     "wrapped 404 status error",
+			err:      fmt.Errorf("failed to get playlist tracks: %w", &api.StatusError{StatusCode: http.StatusNotFound}),
 			expected: true,
 		},
 		{
-			name:     "other error",
+			name:     "other status error",
+			err:      &api.StatusError{StatusCode: http.StatusInternalServerError, Status: "Internal Server Error"},
+			expected: false,
+		},
+		{
+			name:     "plain error",
 			err:      errors.New("some other error"),
 			expected: false,
 		},

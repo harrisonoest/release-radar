@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -162,34 +164,39 @@ type Authenticator struct {
 	cfg      *config.Config
 	store    *db.Store
 	cacheDir string
+
+	mu          sync.Mutex // guards devToken/devTokenExp cache
+	devToken    string
+	devTokenExp time.Time
 }
 
 func NewAuthenticator(cfg *config.Config) (*Authenticator, error) {
 	return NewAuthenticatorWithCacheDir(cfg, "")
 }
 
-func NewAuthenticatorWithStore(cfg *config.Config, store *db.Store) (*Authenticator, error) {
+func validateConfig(cfg *config.Config) error {
 	if cfg.Apple.TeamID == "" {
-		return nil, fmt.Errorf("apple.team_id is not set in config")
+		return fmt.Errorf("apple.team_id is not set in config")
 	}
 	if cfg.Apple.MusicKitKeyID == "" {
-		return nil, fmt.Errorf("apple.musickit_key_id is not set in config")
+		return fmt.Errorf("apple.musickit_key_id is not set in config")
 	}
 	if cfg.Apple.MusicKitKeyPath == "" {
-		return nil, fmt.Errorf("apple.musickit_key_path is not set in config")
+		return fmt.Errorf("apple.musickit_key_path is not set in config")
+	}
+	return nil
+}
+
+func NewAuthenticatorWithStore(cfg *config.Config, store *db.Store) (*Authenticator, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
 	}
 	return &Authenticator{cfg: cfg, store: store}, nil
 }
 
 func NewAuthenticatorWithCacheDir(cfg *config.Config, cacheDir string) (*Authenticator, error) {
-	if cfg.Apple.TeamID == "" {
-		return nil, fmt.Errorf("apple.team_id is not set in config")
-	}
-	if cfg.Apple.MusicKitKeyID == "" {
-		return nil, fmt.Errorf("apple.musickit_key_id is not set in config")
-	}
-	if cfg.Apple.MusicKitKeyPath == "" {
-		return nil, fmt.Errorf("apple.musickit_key_path is not set in config")
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
 	}
 	return &Authenticator{cfg: cfg, cacheDir: cacheDir}, nil
 }
@@ -230,25 +237,48 @@ func (a *Authenticator) Authenticate(ctx context.Context) error {
 }
 
 func (a *Authenticator) DeveloperToken() (string, error) {
+	// Fast path: a memoized token that has not expired (leave a small
+	// safety margin so we never hand out a token that expires mid-flight).
+	a.mu.Lock()
+	if a.devToken != "" && time.Now().Before(a.devTokenExp.Add(-time.Minute)) {
+		token := a.devToken
+		a.mu.Unlock()
+		return token, nil
+	}
+	a.mu.Unlock()
+
+	var token string
+	var exp time.Time
 	if a.store != nil {
 		auth, err := a.store.GetAuth()
 		if err == nil && auth != nil && auth.DeveloperToken != "" {
-			exp, parseErr := time.Parse(time.RFC3339, auth.DeveloperExp)
-			if parseErr == nil && time.Now().Before(exp) {
-				return auth.DeveloperToken, nil
+			parsedExp, parseErr := time.Parse(time.RFC3339, auth.DeveloperExp)
+			if parseErr == nil && time.Now().Before(parsedExp) {
+				token = auth.DeveloperToken
+				exp = parsedExp
 			}
 		}
 	} else {
 		cached, err := a.loadCache()
-		if err == nil && cached != nil && time.Now().Before(cached.DeveloperExp) {
-			return cached.DeveloperToken, nil
+		if err == nil && cached != nil && cached.DeveloperToken != "" && time.Now().Before(cached.DeveloperExp) {
+			token = cached.DeveloperToken
+			exp = cached.DeveloperExp
 		}
 	}
 
-	token, err := a.generateDeveloperToken()
-	if err != nil {
-		return "", err
+	if token == "" {
+		var err error
+		token, err = a.generateDeveloperToken()
+		if err != nil {
+			return "", err
+		}
+		exp = time.Now().Add(developerTokenTTL)
 	}
+
+	a.mu.Lock()
+	a.devToken = token
+	a.devTokenExp = exp
+	a.mu.Unlock()
 
 	return token, nil
 }
@@ -293,7 +323,7 @@ func (a *Authenticator) loadKey() (*ecdsa.PrivateKey, error) {
 
 	ecKey, ok := key.(*ecdsa.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("private key is not an ECDSA key")
+		return nil, errors.New("private key is not an ECDSA key")
 	}
 
 	return ecKey, nil
@@ -367,10 +397,16 @@ func (a *Authenticator) startOAuthFlow(ctx context.Context, devToken string) (st
 		done <- body.MusicUserToken
 	})
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+
+	shutdown := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}
 
 	go func() {
-		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -385,27 +421,19 @@ func (a *Authenticator) startOAuthFlow(ctx context.Context, devToken string) (st
 
 	select {
 	case token := <-done:
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		shutdown()
 		return token, nil
 
 	case err := <-errCh:
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		shutdown()
 		return "", err
 
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		shutdown()
 		return "", ctx.Err()
 
 	case <-time.After(5 * time.Minute):
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		shutdown()
 		return "", fmt.Errorf("authentication timed out after 5 minutes")
 	}
 }
@@ -423,9 +451,9 @@ func openBrowser(url string) error {
 	case "darwin":
 		return exec.Command("open", url).Start()
 	case "windows":
-		return exec.Command("cmd", "/c", "start", url).Start()
+		return exec.Command("cmd", "/c", "start", "", url).Start()
 	default:
-		return fmt.Errorf("unsupported platform")
+		return errors.New("unsupported platform")
 	}
 }
 

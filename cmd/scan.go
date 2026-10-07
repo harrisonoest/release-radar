@@ -38,16 +38,16 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			if scanConcurrency > 0 {
-				cfg.Scan.Concurrency = scanConcurrency
-			}
-
 			if scanConcurrency < 0 {
 				return errors.New("concurrency must be >= 0")
 			}
 
 			if scanLimitArtists < 0 {
 				return errors.New("limit must be >= 0")
+			}
+
+			if scanConcurrency > 0 {
+				cfg.Scan.Concurrency = scanConcurrency
 			}
 
 			store, err := db.Open("")
@@ -81,10 +81,7 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 				return fmt.Errorf("failed to load ignored artists: %w", err)
 			}
 
-			ignored := make(map[string]bool)
-			for id := range dbIgnored {
-				ignored[id] = true
-			}
+			ignored := dbIgnored
 			for _, id := range cfg.Scan.IgnoredArtists {
 				ignored[id] = true
 			}
@@ -174,15 +171,17 @@ New releases are added to your Release Radar playlist (or configured playlist).`
 
 			// Lazy backfill: if releases table is empty, walk the playlist and seed it.
 			if !scanNoBackfill && !dryRun {
-				if err := pm.EnsurePlaylistSilent(ctx); err == nil {
-					playlistID, _ := pm.EnsurePlaylist(ctx)
-					if playlistID != "" {
-						n, berr := pm.BackfillFromPlaylist(ctx, playlistID)
-						if berr != nil {
-							fmt.Fprintf(os.Stderr, "Warning: backfill failed: %v\n", berr)
-						} else if n > 0 && verbose {
-							fmt.Printf("Backfilled %d releases from existing playlist.\n", n)
-						}
+				// Single lookup: returns the ID when the playlist exists,
+				// empty when it doesn't — no second find-or-create round trip.
+				playlistID, err := pm.EnsurePlaylistSilent(ctx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: playlist lookup failed: %v\n", err)
+				} else if playlistID != "" {
+					n, berr := pm.BackfillFromPlaylist(ctx, playlistID)
+					if berr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: backfill failed: %v\n", berr)
+					} else if n > 0 && verbose {
+						fmt.Printf("Backfilled %d releases from existing playlist.\n", n)
 					}
 				}
 			}
@@ -317,8 +316,9 @@ func printReleases(releases []scanner.Release) {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-1] + "…"
+	return string(runes[:maxLen-1]) + "…"
 }

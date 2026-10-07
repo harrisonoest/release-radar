@@ -722,7 +722,7 @@ func TestScanner_checkArtist_RateLimitRetry(t *testing.T) {
 		mu.Unlock()
 
 		if attemptCount < 3 {
-			return nil, fmt.Errorf("rate limited (429)")
+			return nil, fmt.Errorf("rate limited (429): %w", api.ErrRateLimited)
 		}
 
 		return &api.ArtistAlbumsResult{
@@ -772,7 +772,7 @@ func TestScanner_checkArtist_RateLimitExhausted(t *testing.T) {
 		return "us", nil
 	}
 	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
-		return nil, fmt.Errorf("rate limited (429)")
+		return nil, fmt.Errorf("rate limited (429): %w", api.ErrRateLimited)
 	}
 
 	cfg := &config.Config{
@@ -1225,7 +1225,7 @@ func TestScan_TracksPermanentFailures(t *testing.T) {
 	client := newMockAPIClient()
 	client.getStorefrontFn = func(ctx context.Context) (string, error) { return "us", nil }
 	client.getArtistAlbumsFn = func(ctx context.Context, storefront, artistID string, since time.Time) (*api.ArtistAlbumsResult, error) {
-		return nil, errors.New("rate limited (429)")
+		return nil, fmt.Errorf("rate limited (429): %w", api.ErrRateLimited)
 	}
 	s := New(cfg, client, nil, false)
 

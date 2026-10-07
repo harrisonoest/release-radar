@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/harrisonoest/release-radar/pkg/api"
 	"github.com/harrisonoest/release-radar/pkg/db"
 )
 
@@ -24,7 +26,7 @@ type Aggregator struct {
 // StoreWriter is the subset of *db.Store the Aggregator needs.
 type StoreWriter interface {
 	ReplaceArtists(artists []db.Artist) error
-	UpsertArtistSource(src db.ArtistSource) error
+	UpsertArtistSources(sources []db.ArtistSource) error
 }
 
 // Aggregate runs all given Sources, dedupes the results, resolves names to
@@ -89,19 +91,15 @@ func (a *Aggregator) Aggregate(ctx context.Context, sources []Source) error {
 		}
 	}
 
-	var finalCatalogIDs []string
+	// Build artist rows directly, applying the collaboration filter inline.
+	rows := make([]db.Artist, 0, len(bestName))
 	for catalogID, name := range bestName {
 		if resolved[catalogID] && isCollaboration(name) {
 			continue
 		}
-		finalCatalogIDs = append(finalCatalogIDs, catalogID)
-	}
-
-	var rows []db.Artist
-	for _, id := range finalCatalogIDs {
 		rows = append(rows, db.Artist{
-			CatalogID: id,
-			Name:      bestName[id],
+			CatalogID: catalogID,
+			Name:      name,
 			LastSeen:  now,
 		})
 	}
@@ -112,6 +110,7 @@ func (a *Aggregator) Aggregate(ctx context.Context, sources []Source) error {
 	if a.SkipSourceRows {
 		return nil
 	}
+	sourceRows := make([]db.ArtistSource, 0)
 	for srcKey, raws := range rawBySource {
 		parts := strings.SplitN(srcKey, "|", 2)
 		sourceType, sourceID := parts[0], parts[1]
@@ -124,13 +123,16 @@ func (a *Aggregator) Aggregate(ctx context.Context, sources []Source) error {
 					continue
 				}
 			}
-			_ = a.Store.UpsertArtistSource(db.ArtistSource{
+			sourceRows = append(sourceRows, db.ArtistSource{
 				CatalogID:  catalogID,
 				SourceType: sourceType,
 				SourceID:   sourceID,
 				AddedAt:    now,
 			})
 		}
+	}
+	if err := a.Store.UpsertArtistSources(sourceRows); err != nil {
+		return fmt.Errorf("UpsertArtistSources failed: %w", err)
 	}
 
 	return nil
@@ -173,6 +175,14 @@ func (a *Aggregator) searchArtistWithRetry(ctx context.Context, name string) (st
 		result, err := a.Fetcher.SearchArtists(ctx, a.Storefront, name)
 		if err != nil {
 			a.log("search failed for %q (attempt %d): %v", name, attempt+1, err)
+			// 4xx errors are deterministic — retrying only burns rate
+			// limit. 429 is the exception: it recovers after backoff.
+			var statusErr *api.StatusError
+			if errors.As(err, &statusErr) &&
+				statusErr.StatusCode >= 400 && statusErr.StatusCode < 500 &&
+				statusErr.StatusCode != http.StatusTooManyRequests {
+				return "", false
+			}
 			continue
 		}
 		if result == nil || len(result.Artists) == 0 {

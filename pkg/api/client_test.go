@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -420,6 +421,13 @@ func TestGetArtistAlbums_RateLimited(t *testing.T) {
 	_, err = client.GetArtistAlbums(context.Background(), "us", "123", time.Now())
 	if err == nil {
 		t.Fatal("expected error for 429 response")
+	}
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("expected ErrRateLimited, got %v", err)
+	}
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("expected StatusError with 429, got %v", err)
 	}
 }
 

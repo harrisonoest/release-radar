@@ -6,6 +6,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/harrisonoest/release-radar/pkg/api"
@@ -69,7 +70,7 @@ func Build(sourceType, sourceID string) (Source, error) {
 		return &LikedSongs{}, nil
 	case "playlist":
 		if sourceID == "" {
-			return nil, fmt.Errorf("playlist source requires an id")
+			return nil, errors.New("playlist source requires an id")
 		}
 		return &PlaylistSource{playlistID: sourceID}, nil
 	default:

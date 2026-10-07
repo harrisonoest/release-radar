@@ -94,26 +94,32 @@ For 'playlist', the id is the playlist's Apple Music ID (or use 'name:NAME' to r
 			return fmt.Errorf("playlist source requires an id (or 'name:PLAYLIST NAME')")
 		}
 
-		if sourceType == "playlist" && len(sourceID) > 5 && sourceID[:5] == "name:" {
-			playlistName := sourceID[5:]
-			client, err := apiClientForSource()
+		cfg, err := config.Load(cfgFile)
+		if err != nil {
+			return err
+		}
+
+		name, isName := strings.CutPrefix(sourceID, "name:")
+		if sourceType == "playlist" && isName {
+			client, srcStore, err := apiClientForSource()
 			if err != nil {
 				return err
 			}
+			defer srcStore.Close()
 			playlists, err := client.GetAllLibraryPlaylists(cmd.Context())
 			if err != nil {
 				return err
 			}
 			found := false
 			for _, p := range playlists {
-				if p.Name == playlistName {
+				if p.Name == name {
 					sourceID = p.ID
 					found = true
 					break
 				}
 			}
 			if !found {
-				return fmt.Errorf("playlist named %q not found in your library", playlistName)
+				return fmt.Errorf("playlist named %q not found in your library", name)
 			}
 		}
 
@@ -127,7 +133,11 @@ For 'playlist', the id is the playlist's Apple Music ID (or use 'name:NAME' to r
 			return err
 		}
 		defer store.Close()
-		client, err := apiClientForSource()
+		authenticator, err := auth.NewAuthenticatorWithStore(cfg, store)
+		if err != nil {
+			return err
+		}
+		client, err := api.NewClient(cfg, authenticator)
 		if err != nil {
 			return err
 		}
@@ -207,12 +217,17 @@ var sourcesScanCmd = &cobra.Command{
 			&source.LibrarySongs{},
 			&source.LikedSongs{},
 		}
-		playlistIDs, _ := store.PlaylistSourceIDs()
+		playlistIDs, err := store.PlaylistSourceIDs()
+		if err != nil {
+			return fmt.Errorf("failed to list playlist sources: %w", err)
+		}
 		for _, pid := range playlistIDs {
-			ps, _ := source.Build("playlist", pid)
-			if ps != nil {
-				sources = append(sources, ps)
+			ps, err := source.Build("playlist", pid)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: skipping playlist source %s: %v\n", pid, err)
+				continue
 			}
+			sources = append(sources, ps)
 		}
 		agg := &source.Aggregator{
 			Store:      store,
@@ -228,21 +243,29 @@ var sourcesScanCmd = &cobra.Command{
 	},
 }
 
-func apiClientForSource() (*api.Client, error) {
+// apiClientForSource returns an authenticated API client along with its
+// backing store; the caller must Close the store when done with both (the
+// client's Authenticator keeps a reference to it).
+func apiClientForSource() (*api.Client, *db.Store, error) {
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	store, err := db.Open("")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	defer store.Close()
 	authenticator, err := auth.NewAuthenticatorWithStore(cfg, store)
 	if err != nil {
-		return nil, err
+		store.Close()
+		return nil, nil, err
 	}
-	return api.NewClient(cfg, authenticator)
+	client, err := api.NewClient(cfg, authenticator)
+	if err != nil {
+		store.Close()
+		return nil, nil, err
+	}
+	return client, store, nil
 }
 
 func init() {

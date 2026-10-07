@@ -23,11 +23,11 @@ func (m *mockStore) ReplaceArtists(artists []db.Artist) error {
 	return nil
 }
 
-func (m *mockStore) UpsertArtistSource(src db.ArtistSource) error {
+func (m *mockStore) UpsertArtistSources(sources []db.ArtistSource) error {
 	if m.upsertErr != nil {
 		return m.upsertErr
 	}
-	m.sources = append(m.sources, src)
+	m.sources = append(m.sources, sources...)
 	return nil
 }
 

@@ -27,10 +27,16 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("failed to load scan state: %w", err)
 		}
 
-		auth, _ := store.GetAuth()
-		authenticated := auth != nil && auth.MusicUserToken != ""
+		authRecord, err := store.GetAuth()
+		if err != nil {
+			return fmt.Errorf("failed to load auth state: %w", err)
+		}
+		authenticated := authRecord != nil && authRecord.MusicUserToken != ""
 
-		ignoredCount, _ := store.CountIgnoredArtists()
+		ignoredCount, err := store.CountIgnoredArtists()
+		if err != nil {
+			return fmt.Errorf("failed to count ignored artists: %w", err)
+		}
 
 		fmt.Printf("Artists tracked: %d\n", count)
 		if ignoredCount > 0 {
