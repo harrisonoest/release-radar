@@ -33,14 +33,20 @@ const (
 <body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding-top:60px">
 <h2>Release Radar</h2>
 <p id="status">Loading MusicKit…</p>
-<div id="manual" style="display:none;margin-top:20px">
-  <p>If automatic token capture fails, open your browser devtools (F12), go to the
-  <b>Application</b> tab → <b>Local Storage</b> → <b>localhost</b>,
-  find the key <b>musicUserToken</b>, copy its value, and paste it below:</p>
+<div id="manual" style="display:block;margin-top:20px;color:#333;font-size:14px">
+  <p><b>Page stuck on loading?</b> Firefox-family browsers (Zen, LibreWolf, and Firefox
+  with strict tracking protection) often never finish MusicKit's automatic handoff.
+  Two ways to finish manually:</p>
+  <p><b>A.</b> On the stuck page, open DevTools (F12) → <b>Console</b> and run
+  <code>MusicKit.getInstance().userToken</code> or
+  <code>MusicKit.getInstance().musicUserToken</code>. Copy the printed token, paste it here:</p>
   <input id="tokenInput" type="text" style="width:400px;padding:8px" placeholder="Paste music user token here…">
   <br><br>
   <button onclick="submitManual()" style="padding:8px 20px;cursor:pointer">Submit Token</button>
   <p id="manualStatus" style="color:#666"></p>
+  <p><b>B.</b> Or in a Chromium browser, sign in at <b>music.apple.com</b>, open DevTools (F12) →
+  <b>Application</b> → <b>Local Storage</b> → <b>https://music.apple.com</b>, find the key
+  <b>music.usrToken</b> (a long JWT starting with <code>eyJ</code>), copy it, and paste it above.</p>
 </div>
 <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
 <script>
@@ -95,10 +101,25 @@ document.addEventListener('musickitloaded', async () => {
 
     document.getElementById('status').textContent = 'Signing in to Apple Music…';
 
-    // Attempt authorize with timeout
-    var authPromise = music.authorize();
-    var timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Authorization timed out after 60s')), 60000));
+    // Firefox-family browsers (incl. Zen) sometimes never resolve the
+    // authorize() promise after 2FA even though the token HAS been set on
+    // the instance. Poll for it instead of relying on the promise alone.
+    var settled = false;
+    var authPromise = music.authorize().then(function(){ settled = true; }).catch(function(){ settled = true; });
+    var start = Date.now();
+    var poll = setInterval(function() {
+      var t = music.userToken || music.musicUserToken;
+      var secs = Math.floor((Date.now() - start) / 1000);
+      document.getElementById('status').textContent = 'Waiting for Apple sign-in… (' + secs + 's)';
+      if (t && !settled) {
+        clearInterval(poll);
+        sendToken(t).catch(function(e){ showError('Token send failed: ' + e.message); });
+      }
+    }, 1000);
+
+    var timeout = new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('Authorization timed out after 90s')); }, 90000); });
     await Promise.race([authPromise, timeout]);
+    clearInterval(poll);
 
     var userToken = music.userToken || music.musicUserToken;
 
@@ -342,6 +363,7 @@ func (a *Authenticator) startOAuthFlow(ctx context.Context, devToken string) (st
 
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
+		fmt.Printf("✓ Received music user token (%d bytes) — saved. You can close the browser tab.\n", len(body.MusicUserToken))
 		done <- body.MusicUserToken
 	})
 
