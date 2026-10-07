@@ -298,6 +298,24 @@ func TestAuth_GetSet(t *testing.T) {
 			t.Errorf("music_user_token = %s, want %s", retrieved.MusicUserToken, auth.MusicUserToken)
 		}
 	})
+
+	t.Run("overwrites existing auth row on re-auth", func(t *testing.T) {
+		updated := &AuthTokens{
+			DeveloperToken: "dev-token-789",
+			DeveloperExp:   "2027-12-31T00:00:00Z",
+			MusicUserToken: "user-token-000",
+		}
+		if err := store.SetAuth(updated); err != nil {
+			t.Fatalf("SetAuth on existing row failed: %v", err)
+		}
+		retrieved, err := store.GetAuth()
+		if err != nil {
+			t.Fatalf("GetAuth failed: %v", err)
+		}
+		if retrieved.DeveloperToken != "dev-token-789" || retrieved.MusicUserToken != "user-token-000" {
+			t.Errorf("auth not overwritten: got %+v", retrieved)
+		}
+	})
 }
 
 func TestIgnoredArtists(t *testing.T) {

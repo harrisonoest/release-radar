@@ -527,7 +527,11 @@ func (s *Store) GetAuth() (*AuthTokens, error) {
 }
 
 func (s *Store) SetAuth(auth *AuthTokens) error {
-	_, err := s.db.Exec(`INSERT INTO auth (id, developer_token, developer_exp, music_user_token) VALUES (1, ?, ?, ?)`,
+	_, err := s.db.Exec(`INSERT INTO auth (id, developer_token, developer_exp, music_user_token) VALUES (1, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET
+			developer_token = excluded.developer_token,
+			developer_exp = excluded.developer_exp,
+			music_user_token = excluded.music_user_token`,
 		auth.DeveloperToken, auth.DeveloperExp, auth.MusicUserToken)
 	return err
 }
