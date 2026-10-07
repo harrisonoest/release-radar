@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,6 +31,56 @@ func createTestKeyFile(t *testing.T) string {
 	return tmpFile.Name()
 }
 
+// newTestAuthenticator builds a valid Authenticator backed by a temp cache
+// dir pre-seeded with a valid auth.json, so DeveloperToken() and
+// MusicUserToken() resolve from cache without network or $HOME access.
+func newTestAuthenticator(t *testing.T) *auth.Authenticator {
+	t.Helper()
+
+	key, err := auth.GenerateTestKey()
+	if err != nil {
+		t.Fatalf("failed to generate test key: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal test key: %v", err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "test-key.p8")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	if err := os.WriteFile(keyPath, pemBytes, 0600); err != nil {
+		t.Fatalf("failed to write test key: %v", err)
+	}
+
+	cfg := &config.Config{
+		Apple: config.AppleConfig{
+			TeamID:          "TESTTEAMID",
+			MusicKitKeyID:   "TESTKEYID",
+			MusicKitKeyPath: keyPath,
+		},
+	}
+
+	cacheDir := t.TempDir()
+	authenticator, err := auth.NewAuthenticatorWithCacheDir(cfg, cacheDir)
+	if err != nil {
+		t.Fatalf("failed to create authenticator: %v", err)
+	}
+
+	cache := auth.TokenCache{
+		DeveloperToken: "test-developer-token",
+		DeveloperExp:   time.Now().Add(time.Hour).UTC(),
+		MusicUserToken: "test-music-user-token",
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatalf("failed to marshal token cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "auth.json"), data, 0600); err != nil {
+		t.Fatalf("failed to seed auth.json: %v", err)
+	}
+
+	return authenticator
+}
+
 func TestNewClient(t *testing.T) {
 	keyPath := createTestKeyFile(t)
 	cfg := &config.Config{
@@ -38,7 +91,7 @@ func TestNewClient(t *testing.T) {
 		},
 	}
 
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -73,7 +126,7 @@ func TestGetStorefront(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -118,7 +171,7 @@ func TestGetStorefront_EmptyResponse(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -149,7 +202,7 @@ func TestGetStorefront_HTTPError(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -180,7 +233,7 @@ func TestGetStorefront_ContextCancelled(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -223,7 +276,7 @@ func TestGetArtistAlbums_Success(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -279,7 +332,7 @@ func TestGetArtistAlbums_Pagination(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -319,7 +372,7 @@ func TestGetArtistAlbums_NotFound(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -356,7 +409,7 @@ func TestGetArtistAlbums_RateLimited(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -387,7 +440,7 @@ func TestGetArtistAlbums_HTTPError(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -418,7 +471,7 @@ func TestGetArtistAlbums_ContextCancelled(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -473,7 +526,7 @@ func TestGetAllLibraryArtists_Success(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -579,7 +632,7 @@ func TestGetAllLibraryArtists_Pagination(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -643,7 +696,7 @@ func TestGetAllLibraryArtists_RetryOn5xx(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -707,7 +760,7 @@ func TestGetAllLibraryArtists_RetryOn429(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -744,7 +797,7 @@ func TestGetAllLibraryArtists_RetryExhausted(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -775,7 +828,7 @@ func TestGetAllLibraryArtists_ContextCancelled(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
@@ -830,7 +883,7 @@ func TestGetAllLibraryArtists_NoProgressCallback(t *testing.T) {
 			MusicKitKeyPath: createTestKeyFile(t),
 		},
 	}
-	authenticator := &auth.Authenticator{}
+	authenticator := newTestAuthenticator(t)
 
 	client, err := NewClient(cfg, authenticator)
 	if err != nil {
